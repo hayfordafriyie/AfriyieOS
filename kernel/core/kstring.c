@@ -330,3 +330,55 @@ int af_format_bytes_human(af_u64 bytes, char *out, af_size out_size)
     return af_snprintf(out, out_size, "%u.%02u %s", (af_u32)whole,
                        (af_u32)frac, units[unit]);
 }
+
+// -----------------------------------------------------------------------------
+// THE NAMES THE COMPILER ASKS FOR
+//
+// GCC emits calls to memcpy, memset, memmove and memcmp for things the C
+// language implies but does not spell out: copying a large structure, assigning
+// one, initialising an array. -ffreestanding and -fno-builtin do not stop this —
+// they say the standard library may not exist, which is a statement about what
+// the PROGRAM calls, not about what the COMPILER generates.
+//
+// The kernel has af_memcpy and friends, and for four milestones that was enough
+// because every structure happened to be small enough for GCC to inline the
+// copy. Then AF_MAX_MEMORY_REGIONS went from 128 to 512 — boot_info grew by
+// 9 KiB — and a struct copy in the self test crossed the threshold where GCC
+// stops emitting moves and starts emitting a call:
+//
+//     undefined reference to memcpy'
+//     kernel/core/selftest.c:275
+//
+// Note what that means: the failure had nothing to do with the line that broke,
+// and nothing to do with memory maps. It is the general form of the problem —
+// ANY future change that makes an aggregate big enough will do the same thing,
+// at a link stage where the message points at whichever innocent file contains
+// the copy.
+//
+// Providing the four functions is the fix, and it is the standard one for a
+// freestanding target. They are thin wrappers rather than reimplementations, so
+// there is still exactly one implementation of each.
+//
+// int memcmp(...) rather than af_i32, and size_t-compatible parameters, because
+// these are the declarations GCC assumes; a mismatched signature is a subtly
+// different function as far as the compiler is concerned.
+// -----------------------------------------------------------------------------
+void *memcpy(void *dst, const void *src, af_size n)
+{
+    return af_memcpy(dst, src, n);
+}
+
+void *memset(void *dst, int value, af_size n)
+{
+    return af_memset(dst, value, n);
+}
+
+void *memmove(void *dst, const void *src, af_size n)
+{
+    return af_memmove(dst, src, n);
+}
+
+int memcmp(const void *a, const void *b, af_size n)
+{
+    return af_memcmp(a, b, n);
+}

@@ -388,7 +388,31 @@ static EFI_STATUS read_memory_map(af_boot_info_t *bi, EFI_UINTN *out_map_key)
             (const EFI_MEMORY_DESCRIPTOR *)(s_memmap_storage + (i * descriptor_size));
 
         if (written >= AF_MAX_MEMORY_REGIONS) {
-            efi_console_print("  memmap: more regions than af_boot_info can hold\n");
+            // Say how many there were and what the limit is. The previous
+            // message did not, and "more regions than af_boot_info can hold"
+            // required reading two files to find out whether firmware had
+            // reported 129 regions or 4000 — which is the difference between
+            // raising a limit and redesigning the handoff.
+            //
+            // Built from the pieces rather than as one formatted string: the
+            // bridge has boot_append_dec and no printf, deliberately, because it
+            // runs before anything exists to format into.
+            //
+            // num[0] = '\0' is required: boot_append_dec APPENDS to whatever is
+            // already in the buffer, so an uninitialised one is read first. GCC
+            // caught this with -Wmaybe-uninitialized and was right to.
+            char num[24];
+            num[0] = '\0';
+
+            efi_console_print("  memmap: firmware reported ");
+            boot_append_dec(num, sizeof(num), count);
+            efi_console_print(num);
+            efi_console_print(" regions, but af_boot_info holds only ");
+            num[0] = '\0';
+            boot_append_dec(num, sizeof(num), AF_MAX_MEMORY_REGIONS);
+            efi_console_print(num);
+            efi_console_print("\n");
+
             return EFI_BUFFER_TOO_SMALL;
         }
 

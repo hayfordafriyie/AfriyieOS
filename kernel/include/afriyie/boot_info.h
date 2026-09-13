@@ -74,7 +74,26 @@ typedef struct {
 
 AF_STATIC_ASSERT_SIZE(af_memory_region_t, 24);
 
-#define AF_MAX_MEMORY_REGIONS 128
+// The largest number of memory-map regions the kernel will accept from firmware.
+//
+// RAISED FROM 128 AT v0.5, and the reason is worth keeping.
+//
+// The boot bridge read the map, found more regions than this, and halted with
+// "more regions than af_boot_info can hold" — on GitHub's ubuntu-24.04 runner,
+// which ships a different OVMF from the one in local development. The kernel had
+// never run in CI, so the limit had never been tested against a second firmware.
+//
+// How many regions firmware reports is not something this project controls: it
+// depends on the firmware, the memory layout, and how much the firmware has
+// allocated by the time boot services hand over. A limit that is comfortably
+// sufficient on one machine is a guess about another. 512 regions is 12 KiB of
+// boot info, which is nothing next to the 64 KiB buffer the bridge already reads
+// the map into.
+//
+// The bridge still refuses rather than truncating, which is the correct
+// behaviour and is what made this diagnosable instead of mysterious: a truncated
+// map would have produced a PMM that silently ignored usable memory.
+#define AF_MAX_MEMORY_REGIONS 512
 
 // -----------------------------------------------------------------------------
 // Framebuffer (from UEFI GOP or the device tree's simple-framebuffer node)

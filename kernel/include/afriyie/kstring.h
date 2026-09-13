@@ -19,6 +19,29 @@ void  *af_memmove(void *dst, const void *src, af_size n);
 int    af_memcmp(const void *a, const void *b, af_size n);
 
 // -----------------------------------------------------------------------------
+// The names the COMPILER asks for, as opposed to the ones the kernel calls.
+//
+// GCC emits calls to these for aggregate copies, structure assignment and array
+// initialisation, whatever -ffreestanding and -fno-builtin say — those flags
+// describe what the program may call, not what the compiler may emit. Until v0.5
+// every structure happened to be small enough to be copied inline, so nothing
+// needed these; raising AF_MAX_MEMORY_REGIONS made one of them big enough, and
+// the link failed with "undefined reference to `memcpy'" pointing at a file with
+// no memcpy in it.
+//
+// Declared here so the definitions have a prototype, and so the next person to
+// add a large structure does not have to rediscover why they exist.
+//
+// These are NOT `extern "C"`-guarded freestanding replacements for libc: they
+// are what the compiler generates a call to, and the definitions forward to the
+// af_* versions so there remains exactly one implementation of each.
+// -----------------------------------------------------------------------------
+void  *memcpy(void *dst, const void *src, af_size n);
+void  *memset(void *dst, int value, af_size n);
+void  *memmove(void *dst, const void *src, af_size n);
+int    memcmp(const void *a, const void *b, af_size n);
+
+// -----------------------------------------------------------------------------
 // Strings
 // -----------------------------------------------------------------------------
 af_size af_strlen(const char *s);
