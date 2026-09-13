@@ -15,6 +15,7 @@
 // being bare indices. See docs/architecture/capability-model.md.
 
 #include "afriyie/process.h"
+#include "afriyie/cap.h"
 #include "afriyie/thread.h"
 #include "afriyie/sched.h"
 #include "afriyie/heap.h"
@@ -115,10 +116,25 @@ af_process_t *process_create(const char *name, af_pid_t parent)
         return NULL;
     }
 
+    // --- capability table ----------------------------------------------------
+    //
+    // Created BEFORE the process is marked live, for the same reason the address
+    // space is: a failure here must leave the slot free rather than half-built.
+    // A process in the table with no capability table is a process whose first
+    // syscall dereferences NULL.
+    af_cap_table_t *caps = cap_table_create();
+    if (caps == NULL) {
+        af_error("proc", "could not create a capability table for '%s'", name);
+        hal_pt_destroy(space);
+        proc->pid = AF_PID_INVALID;
+        return NULL;
+    }
+
     // --- fill in -------------------------------------------------------------
     proc->state        = AF_PROCESS_ALIVE;
     proc->parent       = parent;
     proc->addr_space   = space;
+    proc->caps         = caps;
     proc->threads      = NULL;
     proc->thread_count = 0;
     proc->exit_code    = 0;
@@ -284,6 +300,15 @@ void process_reap(af_process_t *proc)
                 proc->pid, proc->name, (af_u64)proc->addr_space);
         hal_pt_destroy(proc->addr_space);
         proc->addr_space = 0;
+    }
+
+    // The capability table goes with the process. Its slots reference objects
+    // owned elsewhere, so destroying it releases REFERENCES, not objects — a
+    // frame two processes share must not be freed by whichever of them exits
+    // first. That is what the frame reference count in hal_pt_destroy is for.
+    if (proc->caps != NULL) {
+        cap_table_destroy(proc->caps);
+        proc->caps = NULL;
     }
 
     if (proc->thread_count != 0) {

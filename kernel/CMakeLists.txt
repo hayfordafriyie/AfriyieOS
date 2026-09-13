@@ -48,6 +48,13 @@ set(AF_KERNEL_SOURCES
     # (ADR-012), which is why the process exists before any personality does.
     core/process.c
     core/process_selftest.c
+    # --- v0.6: capabilities ---
+    # Authority is decided in cap_lookup and narrowed in cap_derive, and those
+    # are the only two places. Every foreign personality runs on this (ADR-012):
+    # a translated open() becomes a capability lookup, so a bug in a translator
+    # can misuse what the user granted but cannot name what they did not.
+    core/cap.c
+    core/cap_selftest.c
 )
 
 # -----------------------------------------------------------------------------

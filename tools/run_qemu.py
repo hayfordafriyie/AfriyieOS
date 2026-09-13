@@ -92,6 +92,11 @@ EXPECTED_MARKERS = [
     # by — and because the ownership model it encodes (a process owns memory, not
     # a thread) was wrong twice before, in ways a boot test could not see.
     "AF_PROC_OK",
+    # v0.6. Capabilities: the only form of authority in the system. Resolution,
+    # rights enforcement, narrowing on derive, stale-handle detection, and
+    # transitive revocation. This is what a foreign personality's translated
+    # open() lands on, so a bug here is a bug in every personality at once.
+    "AF_CAP_OK",
 ]
 
 FATAL_MARKERS = [

@@ -129,44 +129,45 @@ hal_pt_root_t hal_pt_create_user(void);
 
 // Frees a page-table root and every table it owns.
 //
-// IT ALSO RELEASES EVERY FRAME MAPPED INTO THE SPACE, and this is the part that
-// has to be written down because two pieces of code each assumed they owned the
-// same frame. A user-space frame allocated with pmm_alloc_frame_z and mapped
-// with hal_map_page belongs to the ADDRESS SPACE from the moment it is mapped.
-// The allocator must not free it afterwards:
+// IT ALSO RELEASES EVERY FRAME MAPPED INTO THE SPACE — by UNREFERENCING, not
+// freeing. A user-space frame allocated with pmm_alloc_frame_z and mapped with
+// hal_map_page belongs to the ADDRESS SPACE from the moment it is mapped. The
+// allocator must not free it afterwards:
 //
 //     frame = pmm_alloc_frame_z();
-//     hal_map_page(root, va, frame, ...);   /* ownership moves here */
+//     hal_map_page(root, va, frame, ...);   /* the space owns it now */
 //     ...
-//     hal_pt_destroy(root);                 /* frees frame — do not also free it */
+//     hal_pt_destroy(root);                 /* releases frame */
 //
-// Getting this wrong produces
-//
-//     ERROR pmm: double free of frame 0x...
-//
-// which at least fails loudly. The dangerous direction is the other one: freeing
-// a frame that is still mapped leaves a live translation pointing at memory the
+// Getting this wrong produces "ERROR pmm: double free of frame 0x...", which at
+// least fails loudly. The dangerous direction is the other one: freeing a frame
+// that is still mapped leaves a live translation pointing at memory the
 // allocator has handed to somebody else, and that does not fail until something
 // unrelated corrupts.
 //
 // ---------------------------------------------------------------------------
-// KNOWN LIMITATION, and it is on the critical path.
+// SHARING A FRAME BETWEEN TWO ADDRESS SPACES
 //
-// Because destroy FREES rather than UNREFS, two address spaces cannot share a
-// frame. Process A maps F, process B maps F, A dies, and F is freed while B is
-// still using it; B dies and the double-free assert fires.
+// This works now, and it requires one explicit call:
 //
-// That makes shared memory impossible today, and IPC will need it — a shared
-// buffer is how a message avoids being copied through the kernel on every send.
-// The fix is small and already available: pmm_frame_ref and pmm_frame_unref
-// exist (kernel/include/afriyie/pmm.h), so destroy should unref a leaf instead
-// of freeing it, and a sharer should ref before mapping.
+//     frame = pmm_alloc_frame_z();                  /* refcount 1 */
+//     hal_map_page(root_a, va, frame, ...);         /* still 1 — mapping does
+//                                                      NOT take a reference */
+//     pmm_frame_ref(frame);                         /* 2: B is a second owner */
+//     hal_map_page(root_b, va, frame, ...);
+//     ...
+//     hal_pt_destroy(root_a);                       /* 1 */
+//     hal_pt_destroy(root_b);                       /* 0 — released here */
 //
-// It is NOT done here because it changes frame ownership for every existing
-// caller at the same time as the process object is being introduced, and two
-// ownership changes in one step is how a memory bug becomes unattributable. It
-// belongs with the IPC work, which needs tests specifically for the sharing case
-// rather than a change that merely stops the assert firing.
+// The refcount is what makes the second destroy safe. Without it the first
+// destroy frees a frame B is still using, and the failure lands on B — the
+// process that did nothing wrong.
+//
+// WHY hal_map_page does not take the reference itself: doing so would require
+// every existing caller to release its own reference immediately after mapping,
+// and a caller that forgot would leak a frame rather than crash. Making the
+// sharer responsible puts the extra call exactly where the extra owner is, which
+// is also where a reader needs to see it.
 // ---------------------------------------------------------------------------
 void hal_pt_destroy(hal_pt_root_t root);
 

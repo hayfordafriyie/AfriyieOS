@@ -21,6 +21,44 @@ Lesson:     the generalisable part
 
 ---
 
+## 2026 — Entries from the capability work
+
+### The test tried to derive a right the parent did not have
+
+**Milestone:** v0.6
+**Symptom:** four failures in the new capability self test, all downstream of one:
+
+```
+ERROR cap:   FAIL  a revocable child was derived
+ERROR cap:   FAIL  a grandchild was derived
+ERROR cap:   FAIL  the chain took two slots
+ERROR cap:   FAIL  revoke with the right succeeds
+```
+**Cause:** the test built its revocation chain by deriving
+`AF_RIGHT_READ | AF_RIGHT_REVOKE` from a capability that held only
+`AF_RIGHT_READ | AF_RIGHT_WRITE`. `cap_derive` refused, because REVOKE is not a
+subset of what the parent held — which is Rule 1, and the entire reason the
+function has a subset test.
+
+The code was right and the test was wrong. To test revocation at all the chain
+has to start from a capability that *holds* the revoke right, because derivation
+cannot confer one.
+**Fix:** the chain is built from a separate `root` capability issued with
+`READ | REVOKE`, and `cap_a` deliberately keeps its revoke-free rights so the
+refusal case can still be tested against it. Both cases now exist in the file,
+which is strictly better than before: the broken version tested transitivity and
+not the interaction between the two rules.
+**Found by:** the positive assertion, and only because it was positive. A test
+that checked `cap_derive` returned *something* without checking what would have
+passed on a stubbed implementation returning a constant.
+**Lesson:** when a test for feature X fails, the first question is whether the
+test is exercising X the way X can actually be exercised. Here the failure was
+the implementation correctly enforcing a *different* rule the test had not
+considered — so the test was not merely wrong, it was incomplete, and the fix
+added coverage rather than removing an assertion.
+
+---
+
 ## 2026 — Entries from the process work
 
 ### Two pieces of code each assumed they owned the same frame

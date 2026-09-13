@@ -178,7 +178,74 @@ void af_process_selftest(void)
     // NOT work yet.
 
     // =========================================================================
-    // 5. Cleanup
+    // 5. Shared memory
+    //
+    // The property that was IMPOSSIBLE before this round: two address spaces
+    // mapping one physical frame, and both teardowns being safe.
+    //
+    // This is not a curiosity. Shared memory is how IPC will avoid copying every
+    // message through the kernel (ADR-014 budgets for it), and a capability to a
+    // shared buffer is how one process hands another access to data without
+    // handing over the ability to allocate.
+    //
+    // The failure it guards against is the nastiest shape a memory bug has: the
+    // first destroy looks like ordinary operation and the damage lands on a
+    // process that did nothing wrong.
+    // =========================================================================
+    af_process_t *sh_a = process_create("share-a", AF_PID_KERNEL);
+    af_process_t *sh_b = process_create("share-b", AF_PID_KERNEL);
+    check(sh_a != NULL && sh_b != NULL, "two processes for the sharing test");
+    if (sh_a == NULL || sh_b == NULL) {
+        af_error("proc", "cannot continue without both processes");
+        af_marker("AF_TEST_FAIL");
+        return;
+    }
+
+    af_paddr shared = pmm_alloc_frame_z();
+    check(shared != AF_FRAME_INVALID, "a frame was allocated to share");
+    check(pmm_frame_refcount(shared) == 1, "a fresh frame is referenced once");
+
+    const af_vaddr share_va = AF_USER_REGION_BASE + AF_PAGE_SIZE;
+
+    rc = hal_map_page(sh_a->addr_space, share_va, shared,
+                      HAL_PRESENT | HAL_WRITABLE | HAL_USER);
+    check(!af_status_err(rc), "the frame maps into the first process");
+    check(pmm_frame_refcount(shared) == 1,
+          "mapping alone does NOT take a reference — the sharer must ask");
+
+    // The explicit reference, and it is what makes the second destroy safe.
+    pmm_frame_ref(shared);
+    check(pmm_frame_refcount(shared) == 2, "the second owner took a reference");
+
+    rc = hal_map_page(sh_b->addr_space, share_va, shared,
+                      HAL_PRESENT | HAL_WRITABLE | HAL_USER);
+    check(!af_status_err(rc), "the SAME frame maps into the second process");
+
+    // Both translate the address to the same physical frame. That is what
+    // sharing means, and it is the opposite of the isolation check above —
+    // which is why memory has to be handed over deliberately rather than
+    // accidentally.
+    check(hal_translate(sh_a->addr_space, share_va) == shared,
+          "the first process sees the shared frame");
+    check(hal_translate(sh_b->addr_space, share_va) == shared,
+          "the second process sees the SAME shared frame");
+
+    // The first teardown. Before unref, this freed the frame out from under B.
+    sh_a->state = AF_PROCESS_ZOMBIE;
+    process_reap(sh_a);
+    check(pmm_frame_refcount(shared) == 1,
+          "the first destroy released ONE reference, not the frame");
+    check(hal_translate(sh_b->addr_space, share_va) == shared,
+          "the surviving process's mapping is still valid after the other died");
+
+    // And the second teardown actually releases it.
+    sh_b->state = AF_PROCESS_ZOMBIE;
+    process_reap(sh_b);
+    check(pmm_frame_refcount(shared) == 0,
+          "the last destroy released the shared frame");
+
+    // =========================================================================
+    // 6. Cleanup
     //
     // Process A is still alive at this point — it had to be, for the isolation
     // checks above to mean anything — and the test ends it explicitly.
@@ -201,7 +268,7 @@ void af_process_selftest(void)
           "a reaped pid no longer resolves");
 
     // =========================================================================
-    // 6. Diagnostics
+    // 7. Diagnostics
     // =========================================================================
 
     if (s_failures != 0) {

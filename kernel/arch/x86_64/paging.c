@@ -300,8 +300,9 @@ void hal_pt_destroy(hal_pt_root_t root)
                 }
 
                 if ((pde & PTE_HUGE) != 0) {
-                    // A 2 MiB page: release the frame it covers.
-                    pmm_free_frame(pde & PTE_ADDR_MASK);
+                    // A 2 MiB page. Unreferenced, not freed: see the note on
+                    // pmm_frame_unref below.
+                    pmm_frame_unref(pde & PTE_ADDR_MASK);
                     continue;
                 }
 
@@ -310,7 +311,27 @@ void hal_pt_destroy(hal_pt_root_t root)
                 for (af_u32 pt_i = 0; pt_i < ENTRIES_PER_TABLE; pt_i++) {
                     af_u64 pte = pt[pt_i];
                     if ((pte & PTE_PRESENT) != 0) {
-                        pmm_free_frame(pte & PTE_ADDR_MASK);
+                        // UNREF, NOT FREE. This is the line that makes shared
+                        // memory possible.
+                        //
+                        // Freeing here is correct while every frame has exactly
+                        // one owner, which was true until processes shared
+                        // anything. With two address spaces mapping one frame,
+                        // the first destroy looks like ordinary operation and
+                        // FREES a frame the second process is still using — and
+                        // the second destroy then double-frees it. The failure
+                        // lands on the innocent process, which is the worst
+                        // property a memory bug can have.
+                        //
+                        // With unref, the count is 1 (allocated) + 1 (the
+                        // sharer's explicit pmm_frame_ref) = 2, the first
+                        // destroy takes it to 1, and the second releases it.
+                        //
+                        // hal_map_page does NOT take a reference, deliberately —
+                        // see the note beside it — so every existing caller
+                        // keeps working unchanged and sharing is explicit at the
+                        // one place that does it.
+                        pmm_frame_unref(pte & PTE_ADDR_MASK);
                     }
                 }
 

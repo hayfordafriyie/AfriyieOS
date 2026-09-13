@@ -40,6 +40,7 @@
 #include "hal.h"
 
 struct af_thread;
+struct af_cap_table;
 
 #define AF_PROCESS_NAME_LEN 24
 
@@ -85,6 +86,19 @@ typedef struct af_process {
 
     af_u64              created_tick;
     char                name[AF_PROCESS_NAME_LEN];
+
+    // The process's capabilities — everything it is allowed to do.
+    //
+    // A POINTER, allocated with the process and freed with it, not an embedded
+    // array: 256 processes x 256 slots x 24 bytes is 1.5 MiB of kernel BSS for a
+    // table that is almost entirely empty, and a process that does not exist has
+    // no business reserving capability slots.
+    //
+    // This is the field that was deliberately absent until v0.6. It could not
+    // exist before the process object did — a capability is authority held by a
+    // PROGRAM — and it was left out rather than stubbed, because a table nothing
+    // enforces looks exactly like isolation and is not.
+    struct af_cap_table *caps;
 } af_process_t;
 
 // Clears the table. Called once, from kmain, before any thread runs that might

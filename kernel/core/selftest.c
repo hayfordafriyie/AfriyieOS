@@ -14,6 +14,7 @@
 #include "afriyie/selftest.h"
 #include "afriyie/binfmt.h"   // the declaration of the runner itself
 #include "afriyie/process.h"  // v0.6 process checks
+#include "afriyie/cap.h"      // v0.6 capability checks
 #include "afriyie/kstring.h"
 #include "afriyie/boot_info.h"
 #include "afriyie/fb.h"
@@ -678,6 +679,13 @@ void af_selftest_run_all(void)
     // and every IPC endpoint will be attached to, so it is tested before
     // anything is built on it rather than after.
     af_process_selftest();
+
+    // v0.6 capabilities: resolution, rights enforcement, narrowing on
+    // derive, stale-handle detection, and transitive revocation. Authority
+    // is decided in exactly two functions and both are exercised here,
+    // because a rights system with an untested path is a rights system with
+    // a bypass.
+    af_cap_selftest();
 
     if (s_failed == 0) {
         af_info("test", "%u checks passed", s_passed);
