@@ -913,15 +913,15 @@ Run `./tools/verify_all.sh` — 7 of 7 checks pass.
 - [x] Write `tools/mkimage.py` — assemble ESP (FAT32) disk image with `BOOTX64.EFI`
 - [x] Write `tools/run_qemu.py` — one command to build + boot + attach serial
 - [x] Write `tools/verify_image.py` — independent structural verifier (35 checks) ✅ **verified**
-- [~] CI: `.github/workflows/ci.yml` builds and boots in QEMU, greps serial for the boot markers
-      — **unticked until it is seen green.** This box was ticked at v0.1 on the
-      strength of the workflow file existing. It has never passed: every run
-      since v0.3 was red on the first step of the first job, and the
-      build-and-boot job was *skipped* on all of them, so the pipeline had never
-      once run the kernel. Seven separate faults were found and fixed after v0.5
-      (see `docs/debug-log.md`). The box goes back to `[x]` when a run is green,
-      and not before — a ticked box for a job that has never executed is exactly
-      the kind of claim this file is supposed to be free of.
+- [x] CI: `.github/workflows/ci.yml` builds and boots in QEMU, greps serial for the boot markers
+      — **green for the first time at v0.5**, commit `677e16b`, all three jobs.
+      The box was ticked at v0.1 on the strength of the workflow file existing
+      and was a false claim for four milestones: every run was red on the first
+      step of the first job, so the build-and-boot job was *skipped* every time
+      and the pipeline had never once run the kernel. Nine faults were found and
+      fixed after v0.5 — five CI faults stacked in front of three kernel-adjacent
+      ones, plus the guard written to catch the first class of fault, which did
+      not work either. `docs/debug-log.md` has all of them.
 - [x] **Commit & push** 🚩
 
 #### 0.1.2 UEFI boot bridge (`boot/uefi/`)
