@@ -10,10 +10,38 @@ Pre-1.0, `MINOR` versions track the roadmap milestones defined in
 
 ---
 
-## [Unreleased] — v0.1.0 *Seed*
+## [v0.1.0] — *Seed* — 2025
 
-> **Milestone status:** 🔨 code complete, awaiting a green CI run.
-> Full detail: [docs/releases/v0.1.0.md](docs/releases/v0.1.0.md)
+> **Milestone status:** ✅ **complete — builds, boots and verified end to end**
+> Full detail and evidence: [docs/releases/v0.1.0.md](docs/releases/v0.1.0.md)
+
+### Verified
+
+```
+AfriyieOS 0.1.0 (Seed) UEFI boot bridge
+  watchdog disabled
+  GOP: 1280x800 pitch 5120
+  kernel: 48 KiB loaded at 0x100000
+
+[    0.000000] INFO  test  : 71 checks passed
+[    0.000000] INFO  boot  : AF_BOOT_OK
+```
+
+`./tools/verify_all.sh` — **7 of 7 checks pass**:
+
+| Check | Result |
+| --- | --- |
+| Host tests (image toolchain) | 25 tests pass |
+| Compile check (16 C files, 3 assembly files) | clean with `-Werror` |
+| Link check (script, symbols, layout) | `kernel_entry` at 0x100000, `.text` 33 761 bytes |
+| Cross build | kernel + valid PE32+ `BOOTX64.EFI` |
+| Image verification | 35/35 structural checks |
+| QEMU boot test | all four markers in order |
+| Screenshot verification | splash renders, correct colours and layout |
+
+Independent tooling confirms it too: `parted` and `sfdisk` read the GPT, and
+`mtools` reads the FAT32 and extracts `BOOTX64.EFI` byte-for-byte. Evidence is
+committed under [docs/releases/evidence/](docs/releases/evidence/).
 
 ### Added
 
@@ -127,7 +155,7 @@ Pre-1.0, `MINOR` versions track the roadmap milestones defined in
 
 | Version | Codename | Theme | Status |
 | --- | --- | --- | --- |
-| v0.1 | Seed | Boot & display | 🔨 code complete, awaiting green CI |
+| v0.1 | Seed | Boot & display | ✅ complete and verified |
 | v0.2 | Roots | Memory & multitasking | ⏳ planned |
 | v0.3 | Trunk | Disk & file system | ⏳ planned |
 | v0.4 | Branches | User mode & syscalls | ⏳ planned |

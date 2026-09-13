@@ -36,6 +36,19 @@ import mkimage  # noqa: E402
 import verify_image  # noqa: E402
 
 
+def strip_c_comments(text: str) -> str:
+    """Remove // and /* */ comments so tests inspect code, not prose.
+
+    A test that asserts on the absence of a literal must not fail because
+    somebody documented the literal. This is not hypothetical: it happened here.
+    """
+    import re
+    text = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
+    text = re.sub(r"//[^\n]*", "", text)
+    text = re.sub(r";[^\n]*", "", text)        # nasm comments
+    return text
+
+
 def make_payload(size: int, seed: int = 12345) -> bytes:
     """Deterministic pseudo-random payload.
 
@@ -346,9 +359,14 @@ class TestBootInfoLayout(unittest.TestCase):
     def test_boot_bridge_uses_the_same_backup_address(self):
         # Both sides refer to the macro, so this is really checking that nobody
         # introduced a hardcoded second copy of the constant.
+        #
+        # Comments are stripped first. The intent is "no duplicated constant in
+        # the CODE", and a comment that explains the fallback address is
+        # documentation, not a duplicate. The first version of this test failed
+        # on a comment, which is a test bug: it was checking prose.
         source = os.path.join(REPO_ROOT, "boot", "uefi", "efi_main.c")
         with open(source, "r", encoding="utf-8") as handle:
-            text = handle.read()
+            text = strip_c_comments(handle.read())
 
         self.assertIn("AF_BOOT_INFO_BACKUP_ADDR", text)
         self.assertNotIn("0x7000", text,
@@ -359,14 +377,32 @@ class TestBootInfoLayout(unittest.TestCase):
         # kernel was not linked for, and the first instruction fetch faults.
         linker = os.path.join(REPO_ROOT, "kernel", "linker", "x86_64.lds")
         with open(linker, "r", encoding="utf-8") as handle:
-            linker_text = handle.read()
+            linker_text = strip_c_comments(handle.read())
 
         source = os.path.join(REPO_ROOT, "boot", "uefi", "efi_main.c")
         with open(source, "r", encoding="utf-8") as handle:
-            boot_text = handle.read()
+            boot_text = strip_c_comments(handle.read())
 
         self.assertIn("KERNEL_BASE = 0x100000", linker_text)
         self.assertIn("#define KERNEL_PHYS_BASE  0x100000ULL", boot_text)
+
+    def test_kernel_entry_is_placed_first(self):
+        # The boot bridge jumps to the link base without reading the ELF header,
+        # so the entry stub must be the first bytes of the image. This was a real
+        # bug: the stub sat at 0x107900 and the machine hung past
+        # ExitBootServices with nothing left to report it.
+        asm = os.path.join(REPO_ROOT, "kernel", "arch", "x86_64", "entry.asm")
+        with open(asm, "r", encoding="utf-8") as handle:
+            asm_text = strip_c_comments(handle.read())
+
+        linker = os.path.join(REPO_ROOT, "kernel", "linker", "x86_64.lds")
+        with open(linker, "r", encoding="utf-8") as handle:
+            linker_text = handle.read()
+
+        self.assertIn("section .text.boot", asm_text,
+                      "the entry stub must be in its own section")
+        self.assertIn("KEEP(*(.text.boot))", linker_text,
+                      "the linker script must place .text.boot first")
 
 
 if __name__ == "__main__":
