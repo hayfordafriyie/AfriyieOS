@@ -286,11 +286,35 @@ static af_status_t virtio_setup_queue(void)
         return AF_ERR_NOTSUP;
     }
 
-    // Compute the exact layout size and allocate whole frames for it.
-    af_u64 bytes = (af_u64)size * sizeof(virtq_desc_t)     // descriptor table
-                 + 6 + (af_u64)size * sizeof(af_u16) + 2   // available ring
-                 + 6 + (af_u64)size * sizeof(virtq_used_elem_t) + 2  // used ring
-                 + 64;                                     // alignment slack
+    // =========================================================================
+    // LEGACY VIRTQUEUE LAYOUT — THE USED RING IS PAGE-ALIGNED
+    // =========================================================================
+    // The legacy interface does not let the driver choose the layout. The device
+    // computes where each ring is, and the rule is:
+    //
+    //     descriptor table   at the base, 16 bytes x queue_size
+    //     available ring     immediately after it
+    //     used ring          at the NEXT PAGE BOUNDARY after the available ring
+    //
+    // The first version placed the used ring immediately after the available
+    // ring, with no padding — which is a reasonable reading of "adjacent" and is
+    // what the MODERN interface allows. The device then wrote its completions to
+    // a page-aligned address the driver was not looking at, and the result was a
+    // request that succeeded completely and was never observed:
+    //
+    //     virtio_blk_req_complete ... status 0     <- the device finished
+    //     (driver spins on used->index forever)    <- the driver never sees it
+    //
+    // QEMU's own virtio trace is what found this. The device log showed the read
+    // completing with status 0 while the driver reported a timeout, which meant
+    // the two disagreed about where the used ring was rather than about whether
+    // the request worked.
+    // =========================================================================
+    af_u64 desc_bytes  = (af_u64)size * sizeof(virtq_desc_t);
+    af_u64 avail_bytes = 6 + (af_u64)size * sizeof(af_u16);
+    af_u64 used_bytes  = 6 + (af_u64)size * sizeof(virtq_used_elem_t);
+    af_u64 used_offset = AF_ALIGN_UP(desc_bytes + avail_bytes, AF_PAGE_SIZE);
+    af_u64 bytes       = used_offset + used_bytes;
 
     af_u32 frames = (af_u32)((bytes + AF_FRAME_SIZE - 1) / AF_FRAME_SIZE);
     if (frames == 0) {
@@ -308,22 +332,13 @@ static af_status_t virtio_setup_queue(void)
     s_queue.virt = (af_u8 *)(af_uptr)queue_phys;
     s_queue.size = size;
 
-    // Lay the three rings out back to back, each aligned as the specification
-    // requires: descriptors to 16 bytes, available to 2, used to 4. A
-    // page-aligned base satisfies all three, but the arithmetic is written out
-    // so that a future change to the base address cannot silently misalign them.
     af_uptr base = (af_uptr)s_queue.virt;
 
-    s_queue.desc = (virtq_desc_t *)AF_ALIGN_UP(base, 16);
-    af_uptr after_desc = (af_uptr)s_queue.desc + (size * sizeof(virtq_desc_t));
+    s_queue.desc  = (virtq_desc_t *)base;
+    s_queue.avail = (virtq_avail_t *)(void *)(base + desc_bytes);
+    s_queue.used  = (virtq_used_t *)(void *)(base + used_offset);
 
-    s_queue.avail = (virtq_avail_t *)AF_ALIGN_UP(after_desc, 2);
-    af_uptr after_avail = (af_uptr)s_queue.avail + 6 + (size * sizeof(af_u16));
-    after_avail += 2;   // the used-event field the driver may write
-
-    s_queue.used = (virtq_used_t *)AF_ALIGN_UP(after_avail, 4);
-    af_uptr after_used = (af_uptr)s_queue.used + 6 + (size * sizeof(virtq_used_elem_t));
-    after_used += 2;    // the used-event field the device may write
+    af_uptr after_used = base + used_offset + used_bytes;
 
     if (after_used > base + (af_size)frames * AF_FRAME_SIZE) {
         af_error("virtio-blk", "queue layout needs %lu bytes but only %lu were "

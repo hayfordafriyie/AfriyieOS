@@ -21,6 +21,95 @@ Lesson:     the generalisable part
 
 ---
 
+## 2025 — Entries from v0.3 development
+
+### The virtqueue's used ring was not page-aligned
+
+**Milestone:** v0.3
+**Symptom:** every virtio-blk request timed out while waiting for the used ring.
+The device was found, its registers were reachable, and reading its capacity from
+device-specific configuration returned **135168 sectors — exactly the size of the
+disk image we had booted from.** So the device was present and the config path
+worked. Requests were submitted and never completed.
+**Cause:** the legacy virtqueue layout does not let the driver choose where the
+rings go. The device computes it:
+
+```
+descriptor table   at the base, 16 bytes x queue_size
+available ring     immediately after it
+used ring          at the NEXT PAGE BOUNDARY after the available ring
+```
+
+The driver placed the used ring immediately after the available ring with no
+padding — a reasonable reading of "adjacent", and what the *modern* interface
+allows. The device then wrote its completions to a page-aligned address the driver
+was not looking at.
+**Fix:** compute `used_offset = align_up(desc_bytes + avail_bytes, 4096)` and
+allocate enough frames for it. For a 256-descriptor queue, the layout grows from
+5648 bytes to 9222 — the padding is a whole page.
+**Found by:** QEMU's own virtio tracing, `-trace enable=virtio_*,file=...`, which
+showed the disagreement directly:
+
+```
+virtio_set_status        val 1     <- driver: ACKNOWLEDGE
+virtio_set_status        val 3     <- driver: ACKNOWLEDGE|DRIVER
+virtio_set_status        val 11    <- driver: +FEATURES_OK
+virtio_set_status        val 15    <- driver: +DRIVER_OK
+virtio_queue_notify      n 0       <- driver notifies
+virtio_blk_handle_read   sector 0 nsectors 1
+virtio_blk_rw_complete   ret 0
+virtio_blk_req_complete  status 0  <- the DEVICE finished successfully
+(driver spins on used->index forever)
+```
+
+**Lesson:** the trace turned "the device is not responding" into "the device
+responded and we are not looking in the right place" — two completely different
+problems with completely different fixes. When one side of a protocol works
+perfectly and the other times out, the fault is almost always a **disagreement
+about where something is**, not about whether it happened. Tracing the wire costs
+five minutes and replaces hours of guessing; three earlier attempts at this
+driver changed code hopefully in exactly the wrong direction.
+
+---
+
+### `FEATURES_OK` was missing from the status handshake
+
+**Milestone:** v0.3
+**Symptom:** the same timeout as above, before the layout was corrected.
+**Cause:** the driver set `ACKNOWLEDGE`, then `ACKNOWLEDGE|DRIVER`, negotiated
+features, set up the queue, and went straight to `DRIVER_OK`. The `FEATURES_OK`
+step was absent.
+**Fix:** the bit is now set and then **read back** — the device writes it back
+only if it accepts the driver's feature set, so an unconditional write would make
+the check meaningless. The device rejecting the features is then reported rather
+than turning into a silent hang.
+**Found by:** reading the specification's initialisation sequence against the
+code, while looking for anything else wrong.
+**Lesson:** this was a real omission but it was *not* the cause of the timeout —
+the layout was. Both were fixed, and the trace is what distinguished them. Fixing
+the first one and re-running would have produced the same timeout and a wrong
+conclusion about which fix mattered.
+
+---
+
+### The driver laid the rings out for 128 descriptors when the device offered 256
+
+**Milestone:** v0.3
+**Symptom:** the same timeout again.
+**Cause:** the driver truncated the queue to 128 to save memory, on the reasoning
+that "the driver may use fewer descriptors than the device offers". That is true
+of the modern interface and **false** of the legacy one, where the device derives
+the ring offsets from the size it published.
+**Fix:** use exactly the size the device reports, and refuse the device if it
+offers more than the driver supports rather than silently truncating.
+**Found by:** the device log line, which prints the offered and used sizes side by
+side — the numbers disagreed, and the discrepancy was visible before any tracing.
+**Lesson:** *log the numbers on both sides of an interface.* This one was in the
+output all along; it took a trace to make it look worth reading. Print what the
+device said as well as what you did with it.
+
+---
+
 ## 2025 — Entries from v0.2 development
 
 ### `context_switch` saved `rsp` eight bytes past the return address

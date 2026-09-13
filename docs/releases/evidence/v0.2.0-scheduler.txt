@@ -5,10 +5,10 @@ AfriyieOS v0.2 scheduler acceptance test — captured from a real boot
 [    0.000000] INFO  pmm   : usable: 522700 frames (2041 MiB)
 [    0.000000] INFO  pmm   : reserved 1 frame(s) at 0x0 for null page
 [    0.000000] INFO  pmm   : reserved 1 frame(s) at 0x7000 for boot_info backup
-[    0.000000] INFO  pmm   : reserved 58 frame(s) at 0x100000 for kernel image (.text .rodata .data .bss)
+[    0.000000] INFO  pmm   : reserved 60 frame(s) at 0x100000 for kernel image (.text .rodata .data .bss)
 [    0.000000] INFO  pmm   : reserved 144 frame(s) at 0x1780000 for pmm metadata
-[    0.000000] INFO  pmm   : ready: 522496 frames free of 522700 usable (2041 MiB available)
-[    0.000000] INFO  pmm   : frames  : 524020 total, 522496 free, 1524 used
+[    0.000000] INFO  pmm   : ready: 522494 frames free of 522700 usable (2040 MiB available)
+[    0.000000] INFO  pmm   : frames  : 524020 total, 522494 free, 1526 used
 [    0.000000] INFO  pmm   : memory  : 1.99 GiB free of 2046 MiB total
 [    0.000000] INFO  pmm   : largest free run: 512303 frames (2001 MiB)
 [    0.000000] INFO  pmm   : metadata: 63 KiB bitmap + 511 KiB refcounts
@@ -17,17 +17,19 @@ AfriyieOS v0.2 scheduler acceptance test — captured from a real boot
 [    0.000000] DEBUG test  :   ok   pmm_alloc_frame_z returns zeroed memory
 [    0.000000] DEBUG test  :   ok   heap_check: slabs, free lists and guard bands are intact
 [    0.000000] INFO  thread: adopted the boot context as tid 1 'boot'
-[    0.000000] INFO  thread: created tid 2 'idle': 16 KiB stack at 0x1E42000, priority 7
+[    0.000000] INFO  thread: created tid 2 'idle': 16 KiB stack at 0x1E44000, priority 7
 [    0.000000] INFO  sched : round-robin scheduler ready: 8 priority levels, 2 tick slice at 100 Hz
-[    0.020000] INFO  sched : idle thread running (tid 2)
-[    0.040000] INFO  test  : scheduler acceptance test: two threads, 200 iterations each
-[    0.080000] INFO  thread: created tid 3 'alpha': 16 KiB stack at 0x1E46000, priority 4
-[    0.120000] INFO  thread: created tid 4 'beta': 16 KiB stack at 0x1E52000, priority 4
-[    0.160000] INFO  thread: tid 3 'alpha' exiting after 0 ticks and 201 switches
-[    0.180000] INFO  thread: tid 4 'beta' exiting after 0 ticks and 201 switches
-[    0.180000] DEBUG test  :   ok   both threads ran to completion (200 iterations each; waited 1 ticks)
-[    0.180000] INFO  thread: created tid 5 'spinner': 16 KiB stack at 0x1E56000, priority 4
-[    0.290000] DEBUG test  :   ok   preemption: a non-yielding thread was interrupted (13466012 iterations counted while the boot thread slept)
-[    0.300000] INFO  thread: tid 5 'spinner' exiting after 7 ticks and 4 switches
-[    0.350000] DEBUG test  :   ok   an exited thread was reaped and removed from the table
-[    0.350000] INFO  sched : 35 ticks, 425 context switches, 2 live threads
+[    0.010000] INFO  test  : scheduler acceptance test: two threads, 200 iterations each
+[    0.030000] INFO  sched : idle thread running (tid 2)
+[    0.040000] INFO  thread: created tid 3 'alpha': 16 KiB stack at 0x1E48000, priority 4
+[    0.050000] INFO  thread: created tid 4 'beta': 16 KiB stack at 0x1E54000, priority 4
+[    0.080000] INFO  thread: tid 3 'alpha' exiting after 0 ticks and 201 switches
+[    0.090000] INFO  thread: tid 4 'beta' exiting after 0 ticks and 201 switches
+[    0.110000] DEBUG test  :   ok   both threads ran to completion (200 iterations each; waited 1 ticks)
+[    0.110000] INFO  thread: created tid 5 'spinner': 16 KiB stack at 0x1E58000, priority 4
+[    0.220000] DEBUG test  :   ok   preemption: a non-yielding thread was interrupted (12098841 iterations counted while the boot thread slept)
+[    0.230000] INFO  thread: tid 5 'spinner' exiting after 7 ticks and 4 switches
+[    0.270000] DEBUG test  :   ok   an exited thread was reaped and removed from the table
+[    0.270000] INFO  sched : 27 ticks, 420 context switches, 2 live threads
+[    0.270000] INFO  sched :   run queue priority 7: 1 thread(s)
+[    0.270000] INFO  sched :   running: tid 1 'boot' (slice 2)
