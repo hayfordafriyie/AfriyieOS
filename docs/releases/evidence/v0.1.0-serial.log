@@ -1,0 +1,159 @@
+[=3hBdsDxe: loading Boot0002 "UEFI Misc Device" from PciRoot(0x0)/Pci(0x3,0x0)
+BdsDxe: starting Boot0002 "UEFI Misc Device" from PciRoot(0x0)/Pci(0x3,0x0)
+
+AfriyieOS 0.1.0 (Seed) UEFI boot bridge
+--------------------------------------------------------------
+  watchdog disabled
+  GOP: 1280x800 pitch 5120
+  kernel: 48 KiB loaded at 0x100000
+
+AfriyieOS 0.1.0 (Seed) booting
+[    0.000000] INFO  boot  : ==============================================================
+[    0.000000] INFO  boot  :  AfriyieOS 0.1.0 (Seed)
+[    0.000000] INFO  boot  : ==============================================================
+[    0.000000] INFO  boot  : firmware        : UEFI
+[    0.000000] INFO  boot  : boot flags      : 0x3
+[    0.000000] INFO  boot  : cpus            : 1
+[    0.000000] INFO  boot  : firmware page   : 4096 bytes
+[    0.000000] INFO  boot  : kernel phys     : 0x100000 (48 KiB)
+[    0.000000] INFO  boot  : ramdisk         : none
+[    0.000000] INFO  boot  : debug uart      : 0x3F8 @ 115200 baud (clk 0 Hz, shift 0)
+[    0.000000] INFO  boot  : framebuffer     : 0x80000000  1280x800  32 bpp  pitch 5120  RGBX8888
+[    0.000000] INFO  boot  : memory regions  : 117
+[    0.000000] INFO  boot  : usable ram      : 2041 MiB
+[    0.000000] INFO  boot  : highest address : 0x10000000000
+[    0.000000] INFO  boot  :   [ 0] 0x00000000000 - 0x00000086FFF       540 KiB  usable
+[    0.000000] INFO  boot  :   [ 1] 0x00000087000 - 0x00000087FFF         4 KiB  bootloader
+[    0.000000] INFO  boot  :   [ 2] 0x00000088000 - 0x0000009FFFF        96 KiB  usable
+[    0.000000] INFO  boot  :   [ 3] 0x00000100000 - 0x0000010CFFF        52 KiB  bootloader
+[    0.000000] INFO  boot  :   [ 4] 0x0000010D000 - 0x000007FFFFF      7116 KiB  usable
+[    0.000000] INFO  boot  :   [ 5] 0x00000800000 - 0x00000807FFF        32 KiB  acpi-nvs
+[    0.000000] INFO  boot  :   [ 6] 0x00000808000 - 0x0000080AFFF        12 KiB  usable
+[    0.000000] INFO  boot  :   [ 7] 0x0000080B000 - 0x0000080BFFF         4 KiB  acpi-nvs
+[    0.000000] INFO  boot  :   [ 8] 0x0000080C000 - 0x00000813FFF        32 KiB  usable
+[    0.000000] INFO  boot  :   [ 9] 0x00000814000 - 0x000008FFFFF       944 KiB  acpi-nvs
+[    0.000000] INFO  boot  :   [10] 0x00000900000 - 0x0000177FFFF     14848 KiB  bootloader
+[    0.000000] INFO  boot  :   [11] 0x00001780000 - 0x0007BB6BFFF   2002864 KiB  usable
+[    0.000000] INFO  boot  :   [12] 0x0007BB6C000 - 0x0007BB8BFFF       128 KiB  bootloader
+[    0.000000] INFO  boot  :   [13] 0x0007BB8C000 - 0x0007DE64FFF     35684 KiB  usable
+[    0.000000] INFO  boot  :   [14] 0x0007DE65000 - 0x0007DE86FFF       136 KiB  bootloader
+[    0.000000] INFO  boot  :   [15] 0x0007DE87000 - 0x0007DE95FFF        60 KiB  usable
+[    0.000000] INFO  boot  :   [16] 0x0007DE96000 - 0x0007E50BFFF      6616 KiB  bootloader
+[    0.000000] INFO  boot  :   [17] 0x0007E50C000 - 0x0007E6E9FFF      1912 KiB  bootloader
+[    0.000000] INFO  boot  :   [18] 0x0007E6EA000 - 0x0007E6EAFFF         4 KiB  usable
+[    0.000000] INFO  boot  :   [19] 0x0007E6EB000 - 0x0007E727FFF       244 KiB  bootloader
+[    0.000000] INFO  boot  :   [20] 0x0007E728000 - 0x0007E72AFFF        12 KiB  usable
+[    0.000000] INFO  boot  :   [21] 0x0007E72B000 - 0x0007E730FFF        24 KiB  bootloader
+[    0.000000] INFO  boot  :   [22] 0x0007E731000 - 0x0007E731FFF         4 KiB  usable
+[    0.000000] INFO  boot  :   [23] 0x0007E732000 - 0x0007E7B0FFF       508 KiB  bootloader
+[    0.000000] INFO  boot  :   [24] 0x0007E7B1000 - 0x0007E7BBFFF        44 KiB  bootloader
+[    0.000000] INFO  boot  :   [25] 0x0007E7BC000 - 0x0007E7BFFFF        16 KiB  bootloader
+[    0.000000] INFO  boot  :   [26] 0x0007E7C0000 - 0x0007E7DAFFF       108 KiB  bootloader
+[    0.000000] INFO  boot  :   [27] 0x0007E7DB000 - 0x0007E7DDFFF        12 KiB  bootloader
+[    0.000000] INFO  boot  :   [28] 0x0007E7DE000 - 0x0007E7E9FFF        48 KiB  bootloader
+[    0.000000] INFO  boot  :   [29] 0x0007E7EA000 - 0x0007E7ECFFF        12 KiB  bootloader
+[    0.000000] INFO  boot  :   [30] 0x0007E7ED000 - 0x0007E7F4FFF        32 KiB  bootloader
+[    0.000000] INFO  boot  :   [31] 0x0007E7F5000 - 0x0007E82EFFF       232 KiB  bootloader
+[    0.000000] INFO  boot  :   [32] 0x0007E82F000 - 0x0007E834FFF        24 KiB  bootloader
+[    0.000000] INFO  boot  :   [33] 0x0007E835000 - 0x0007E83AFFF        24 KiB  bootloader
+[    0.000000] INFO  boot  :   [34] 0x0007E83B000 - 0x0007E858FFF       120 KiB  bootloader
+[    0.000000] INFO  boot  :   [35] 0x0007E859000 - 0x0007E85EFFF        24 KiB  bootloader
+[    0.000000] INFO  boot  :   [36] 0x0007E85F000 - 0x0007E874FFF        88 KiB  bootloader
+[    0.000000] INFO  boot  :   [37] 0x0007E875000 - 0x0007E876FFF         8 KiB  bootloader
+[    0.000000] INFO  boot  :   [38] 0x0007E877000 - 0x0007E883FFF        52 KiB  bootloader
+[    0.000000] INFO  boot  :   [39] 0x0007E884000 - 0x0007E886FFF        12 KiB  bootloader
+[    0.000000] INFO  boot  :   [40] 0x0007E887000 - 0x0007E888FFF         8 KiB  bootloader
+[    0.000000] INFO  boot  :   [41] 0x0007E889000 - 0x0007E88AFFF         8 KiB  bootloader
+[    0.000000] INFO  boot  :   [42] 0x0007E88B000 - 0x0007E893FFF        36 KiB  bootloader
+[    0.000000] INFO  boot  :   [43] 0x0007E894000 - 0x0007E894FFF         4 KiB  bootloader
+[    0.000000] INFO  boot  :   [44] 0x0007E895000 - 0x0007E895FFF         4 KiB  bootloader
+[    0.000000] INFO  boot  :   [45] 0x0007E896000 - 0x0007E898FFF        12 KiB  bootloader
+[    0.000000] INFO  boot  :   [46] 0x0007E899000 - 0x0007E8ACFFF        80 KiB  bootloader
+[    0.000000] INFO  boot  :   [47] 0x0007E8AD000 - 0x0007E8AFFFF        12 KiB  bootloader
+[    0.000000] INFO  boot  :   [48] 0x0007E8B0000 - 0x0007E8CBFFF       112 KiB  bootloader
+[    0.000000] INFO  boot  :   [49] 0x0007E8CC000 - 0x0007E8CCFFF         4 KiB  bootloader
+[    0.000000] INFO  boot  :   [50] 0x0007E8CD000 - 0x0007E8D0FFF        16 KiB  bootloader
+[    0.000000] INFO  boot  :   [51] 0x0007E8D1000 - 0x0007E8D2FFF         8 KiB  bootloader
+[    0.000000] INFO  boot  :   [52] 0x0007E8D3000 - 0x0007E8D8FFF        24 KiB  bootloader
+[    0.000000] INFO  boot  :   [53] 0x0007E8D9000 - 0x0007E8DAFFF         8 KiB  bootloader
+[    0.000000] INFO  boot  :   [54] 0x0007E8DB000 - 0x0007E8F0FFF        88 KiB  bootloader
+[    0.000000] INFO  boot  :   [55] 0x0007E8F1000 - 0x0007E8F4FFF        16 KiB  bootloader
+[    0.000000] INFO  boot  :   [56] 0x0007E8F5000 - 0x0007E8FEFFF        40 KiB  bootloader
+[    0.000000] INFO  boot  :   [57] 0x0007E8FF000 - 0x0007E906FFF        32 KiB  bootloader
+[    0.000000] INFO  boot  :   [58] 0x0007E907000 - 0x0007E90AFFF        16 KiB  bootloader
+[    0.000000] INFO  boot  :   [59] 0x0007E90B000 - 0x0007E90EFFF        16 KiB  bootloader
+[    0.000000] INFO  boot  :   [60] 0x0007E90F000 - 0x0007E93EFFF       192 KiB  bootloader
+[    0.000000] INFO  boot  :   [61] 0x0007E93F000 - 0x0007E9FFFFF       772 KiB  runtime
+[    0.000000] INFO  boot  :   [62] 0x0007EA00000 - 0x0007EC02FFF      2060 KiB  bootloader
+[    0.000000] INFO  boot  :   [63] 0x0007EC03000 - 0x0007EC03FFF         4 KiB  bootloader
+[    0.000000] INFO  boot  :   [64] 0x0007EC04000 - 0x0007EC05FFF         8 KiB  bootloader
+[    0.000000] INFO  boot  :   [65] 0x0007EC06000 - 0x0007EC08FFF        12 KiB  bootloader
+[    0.000000] INFO  boot  :   [66] 0x0007EC09000 - 0x0007EC0BFFF        12 KiB  bootloader
+[    0.000000] INFO  boot  :   [67] 0x0007EC0C000 - 0x0007EC0FFFF        16 KiB  bootloader
+[    0.000000] INFO  boot  :   [68] 0x0007EC10000 - 0x0007EC13FFF        16 KiB  bootloader
+[    0.000000] INFO  boot  :   [69] 0x0007EC14000 - 0x0007EC19FFF        24 KiB  bootloader
+[    0.000000] INFO  boot  :   [70] 0x0007EC1A000 - 0x0007EC1CFFF        12 KiB  bootloader
+[    0.000000] INFO  boot  :   [71] 0x0007EC1D000 - 0x0007EC21FFF        20 KiB  bootloader
+[    0.000000] INFO  boot  :   [72] 0x0007EC22000 - 0x0007EC26FFF        20 KiB  bootloader
+[    0.000000] INFO  boot  :   [73] 0x0007EC27000 - 0x0007EC42FFF       112 KiB  bootloader
+[    0.000000] INFO  boot  :   [74] 0x0007EC43000 - 0x0007EC44FFF         8 KiB  bootloader
+[    0.000000] INFO  boot  :   [75] 0x0007EC45000 - 0x0007EC4DFFF        36 KiB  bootloader
+[    0.000000] INFO  boot  :   [76] 0x0007EC4E000 - 0x0007EC4FFFF         8 KiB  bootloader
+[    0.000000] INFO  boot  :   [77] 0x0007EC50000 - 0x0007EC50FFF         4 KiB  bootloader
+[    0.000000] INFO  boot  :   [78] 0x0007EC51000 - 0x0007EC52FFF         8 KiB  bootloader
+[    0.000000] INFO  boot  :   [79] 0x0007EC53000 - 0x0007EC55FFF        12 KiB  bootloader
+[    0.000000] INFO  boot  :   [80] 0x0007EC56000 - 0x0007EC56FFF         4 KiB  bootloader
+[    0.000000] INFO  boot  :   [81] 0x0007EC57000 - 0x0007EC57FFF         4 KiB  bootloader
+[    0.000000] INFO  boot  :   [82] 0x0007EC58000 - 0x0007EC58FFF         4 KiB  bootloader
+[    0.000000] INFO  boot  :   [83] 0x0007EC59000 - 0x0007EC70FFF        96 KiB  bootloader
+[    0.000000] INFO  boot  :   [84] 0x0007EC71000 - 0x0007EC71FFF         4 KiB  bootloader
+[    0.000000] INFO  boot  :   [85] 0x0007EC72000 - 0x0007EC72FFF         4 KiB  bootloader
+[    0.000000] INFO  boot  :   [86] 0x0007EC73000 - 0x0007F087FFF      4180 KiB  bootloader
+[    0.000000] INFO  boot  :   [87] 0x0007F088000 - 0x0007F08BFFF        16 KiB  bootloader
+[    0.000000] INFO  boot  :   [88] 0x0007F08C000 - 0x0007F08CFFF         4 KiB  bootloader
+[    0.000000] INFO  boot  :   [89] 0x0007F08D000 - 0x0007F092FFF        24 KiB  bootloader
+[    0.000000] INFO  boot  :   [90] 0x0007F093000 - 0x0007F094FFF         8 KiB  bootloader
+[    0.000000] INFO  boot  :   [91] 0x0007F095000 - 0x0007F097FFF        12 KiB  bootloader
+[    0.000000] INFO  boot  :   [92] 0x0007F098000 - 0x0007F098FFF         4 KiB  bootloader
+[    0.000000] INFO  boot  :   [93] 0x0007F099000 - 0x0007F0A2FFF        40 KiB  bootloader
+[    0.000000] INFO  boot  :   [94] 0x0007F0A3000 - 0x0007F0A6FFF        16 KiB  bootloader
+[    0.000000] INFO  boot  :   [95] 0x0007F0A7000 - 0x0007F0A9FFF        12 KiB  bootloader
+[    0.000000] INFO  boot  :   [96] 0x0007F0AA000 - 0x0007F4ECFFF      4364 KiB  bootloader
+[    0.000000] INFO  boot  :   [97] 0x0007F4ED000 - 0x0007F5ECFFF      1024 KiB  runtime
+[    0.000000] INFO  boot  :   [98] 0x0007F5ED000 - 0x0007F6ECFFF      1024 KiB  runtime
+[    0.000000] INFO  boot  :   [99] 0x0007F6ED000 - 0x0007F76CFFF       512 KiB  reserved
+[    0.000000] INFO  boot  :   [100] 0x0007F76D000 - 0x0007F77EFFF        72 KiB  acpi-reclaim
+[    0.000000] INFO  boot  :   [101] 0x0007F77F000 - 0x0007F7FEFFF       512 KiB  acpi-nvs
+[    0.000000] INFO  boot  :   [102] 0x0007F7FF000 - 0x0007FDFFFFF      6148 KiB  bootloader
+[    0.000000] INFO  boot  :   [103] 0x0007FE00000 - 0x0007FE6EFFF       444 KiB  usable
+[    0.000000] INFO  boot  :   [104] 0x0007FE6F000 - 0x0007FE8EFFF       128 KiB  bootloader
+[    0.000000] INFO  boot  :   [105] 0x0007FE8F000 - 0x0007FEC2FFF       208 KiB  bootloader
+[    0.000000] INFO  boot  :   [106] 0x0007FEC3000 - 0x0007FEC4FFF         8 KiB  bootloader
+[    0.000000] INFO  boot  :   [107] 0x0007FEC5000 - 0x0007FEC5FFF         4 KiB  usable
+[    0.000000] INFO  boot  :   [108] 0x0007FEC6000 - 0x0007FEC6FFF         4 KiB  bootloader
+[    0.000000] INFO  boot  :   [109] 0x0007FEC7000 - 0x0007FEC7FFF         4 KiB  bootloader
+[    0.000000] INFO  boot  :   [110] 0x0007FEC8000 - 0x0007FED8FFF        68 KiB  bootloader
+[    0.000000] INFO  boot  :   [111] 0x0007FED9000 - 0x0007FEF3FFF       108 KiB  bootloader
+[    0.000000] INFO  boot  :   [112] 0x0007FEF4000 - 0x0007FF77FFF       528 KiB  runtime
+[    0.000000] INFO  boot  :   [113] 0x0007FF78000 - 0x0007FFFFFFF       544 KiB  acpi-nvs
+[    0.000000] INFO  boot  :   [114] 0x000E0000000 - 0x000EFFFFFFF    262144 KiB  reserved
+[    0.000000] INFO  boot  :   [115] 0x000FFC00000 - 0x000FFFFFFFF      4096 KiB  reserved
+[    0.000000] INFO  boot  :   [116] 0x0FD00000000 - 0x0FFFFFFFFFF  12582912 KiB  reserved
+[    0.000000] INFO  boot  : cmdline         : afriyie console=serial fb=gop
+[    0.000000] INFO  boot  : ==============================================================
+[    0.000000] INFO  cpu   : vendor : AuthenticAMD
+[    0.000000] INFO  cpu   : brand  : (brand string unavailable)
+[    0.000000] INFO  cpu   : family 15 model 107 stepping 1
+[    0.000000] INFO  cpu   : cpus   : 0 logical
+[    0.000000] INFO  cpu   : features: 0x78BFBFD (edx) 0x80002001 (ecx)
+[    0.000000] INFO  boot  : AF_GDT_READY
+[    0.000000] INFO  idt   : IDT installed: 256 vectors, 48 exception/IRQ stubs, PIC at 0x20
+[    0.000000] INFO  boot  : AF_IDT_READY
+[    0.000000] INFO  fb    : framebuffer ready: 1280x800, 32 bpp, pitch 5120, format RGBX8888
+[    0.000000] INFO  splash: drew desktop layout on 1280x800
+[    0.000000] INFO  boot  : AF_FB_READY
+[    0.000000] INFO  test  : running v0.1 self tests
+[    0.000000] INFO  test  : 71 checks passed
+[    0.000000] INFO  boot  : AF_TEST_OK
+[    0.000000] INFO  boot  : AfriyieOS 0.1.0 ready — kernel is alive
+[    0.000000] INFO  boot  : AF_BOOT_OK

@@ -41,6 +41,13 @@ tests/**/actual-*.png
 gdb.txt
 qemu-monitor.sock
 
+# Release evidence IS committed: a boot log or a screenshot attached to a
+# release is the proof the acceptance criteria were met, and proof that is not
+# in the repository is not proof.
+!docs/releases/evidence/*.log
+!docs/releases/evidence/*.png
+!docs/releases/evidence/*.ppm
+
 # Core dumps — note the explicit pattern: a bare `core` would also match the
 # kernel/core source directory.
 core.[0-9]*
