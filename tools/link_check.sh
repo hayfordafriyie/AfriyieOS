@@ -45,7 +45,17 @@ KERNEL_CFLAGS=(
     -fno-omit-frame-pointer -fno-builtin
     -mno-red-zone -mno-sse -mno-sse2 -mno-mmx -mno-80387 -mno-avx
     -fno-asynchronous-unwind-tables -fno-unwind-tables
-    -Wall -Wextra -Werror
+    # These MUST match cmake/flags.cmake and tools/compile_check.sh, because the
+    # whole job of this script is to predict the real build.
+    #
+    # -Wno-unused-parameter was missing here and present in both of the others,
+    # so this check was STRICTER than the build it exists to predict: it rejected
+    # a kernel that compiles. That is the same two-copies-of-one-truth problem as
+    # the size budget, one level down — two checkers that disagree mean "the
+    # compile check passed" is not a statement about anything.
+    -Wall -Wextra -Wshadow -Wpointer-arith -Wcast-align -Wwrite-strings
+    -Wredundant-decls -Wmissing-declarations -Wno-unused-parameter
+    -Werror
     -std=gnu11 -g -O0
     -DAF_DEBUG=1 -DAF_ASSERT_ENABLED=1
     -DAF_TARGET_X86_64=1 -DAF_TARGET_AARCH64=0

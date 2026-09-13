@@ -36,6 +36,12 @@ set(AF_KERNEL_SOURCES
     # --- v0.4: user mode and system calls ---
     core/syscall.c
     core/elf.c
+    # --- v0.6: universal application compatibility ---
+    # Format identification only. The personalities themselves are user-space
+    # servers (ADR-012) and arrive at v0.7 onward; this is the piece every one of
+    # them shares, and the piece that can be tested before any of them exist.
+    core/binfmt.c
+    core/binfmt_selftest.c
 )
 
 # -----------------------------------------------------------------------------

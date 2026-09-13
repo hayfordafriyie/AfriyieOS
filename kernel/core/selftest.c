@@ -11,7 +11,8 @@
 #include "afriyie/types.h"
 #include "afriyie/log.h"
 #include "afriyie/assert.h"     // af_panic, for the hard stop on a failed test
-#include "afriyie/selftest.h"   // the declaration of the runner itself
+#include "afriyie/selftest.h"
+#include "afriyie/binfmt.h"   // the declaration of the runner itself
 #include "afriyie/kstring.h"
 #include "afriyie/boot_info.h"
 #include "afriyie/fb.h"
@@ -660,6 +661,16 @@ void af_selftest_run_all(void)
     // v0.2 paging: mapping, translation, unmapping, and a second independent
     // address space.
     af_paging_selftest();
+
+    // v0.6 format identification. Every case is a synthetic header in memory, so
+    // this costs microseconds — and it is the one part of the universal-
+    // compatibility work that can be tested before any personality exists.
+    //
+    // It reports its own marker rather than folding into the count below, because
+    // its failures are counted separately: af_binfmt_selftest emits AF_TEST_FAIL
+    // and its own error lines, and a reader of the boot log should be able to see
+    // format detection specifically rather than inferring it from a total.
+    af_binfmt_selftest();
 
     if (s_failed == 0) {
         af_info("test", "%u checks passed", s_passed);

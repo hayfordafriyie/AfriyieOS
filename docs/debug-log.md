@@ -21,6 +21,97 @@ Lesson:     the generalisable part
 
 ---
 
+## 2026 — Entries from the universal-compatibility work
+
+### The detector knew a file was runnable when it was not
+
+**Milestone:** v0.6
+**Symptom:** the new format-detection self test failed on its own API:
+
+```
+ERROR binfmt: a relocatable object is not executable: expected ELF, got ELF
+```
+
+Expected ELF, got ELF. The assertion was
+`!af_binfmt_is_executable(info.format)` against a relocatable object, and
+`af_binfmt_is_executable(AF_BINFMT_ELF)` answered yes.
+**Cause:** two different questions shared one function name.
+
+```
+af_binfmt_is_executable(format)   is this FORMAT one a loader can enter?
+                                  (yes — ELF is)
+"can I run this FILE?"            (no — a relocatable object is not runnable)
+```
+
+The detector had correctly set `AF_BINFMT_F_NOEXEC` on the relocatable object.
+The predicate ignored it, because it only ever looked at the format. So the
+information was right, the flag was right, and the answer a caller would act on
+was wrong.
+**Fix:** `af_binfmt_can_run(const af_binfmt_info_t *)`, which considers the format,
+the flags and whether identification completed. `af_binfmt_is_executable` stays,
+now documented as the narrower format-level question.
+**Found by:** the positive assertion. A test that checked only "did not crash"
+would have passed, and a caller would have handed a relocatable object to the
+loader.
+**Lesson:** when one function answers two questions that are *almost* the same,
+the wrong answer only shows up at the case where they differ — and that case is
+usually the one that matters. The tell here was that the detector had already
+computed the right answer and put it in a flag nobody consulted.
+
+---
+
+### The test was wrong and the code was right
+
+**Milestone:** v0.6
+**Symptom:** three failures, all on the DMG trailer case:
+
+```
+ERROR binfmt: DMG by its trailer: expected DMG, got unknown
+```
+**Cause:** the test built a 1024-byte buffer and wrote `koly` at `512 - 4`. The
+UDIF signature is the FIRST field of the last 512-byte trailer block, so it
+belongs at offset 512, not 508. The detector looked exactly where the format says
+to look, found zeroes, and reported that honestly.
+**Fix:** moved the signature four bytes, into the block it was supposed to be
+inside.
+**Found by:** the failure message naming the detector's own reason — "no known
+trailer signature" — which said *where* it looked, not merely that it failed.
+**Lesson:** a failing test is a claim about the code and about the test, and the
+test is wrong more often than people assume. The reason string on the result
+struct is what made that distinguishable from a detector bug in one reading
+rather than twenty minutes. Every detector should report where it looked and
+what it saw; the cost is a string literal and the payoff is the entire debugging
+session.
+
+---
+
+### Two checkers, one of which was stricter than the build
+
+**Milestone:** v0.6
+**Symptom:** `compile_check.sh` passed and `link_check.sh` failed on the same
+file:
+
+```
+FAIL kernel/core/binfmt.c
+  error: unused parameter 'data' [-Werror=unused-parameter]
+```
+**Cause:** `link_check.sh` compiled with `-Wall -Wextra -Werror` and without
+`-Wno-unused-parameter`. Both `cmake/flags.cmake` (the real build) and
+`compile_check.sh` have it. So the link check was enforcing a policy the project
+does not have, and rejecting a kernel that builds.
+**Fix:** `link_check.sh` now uses the same warning set as the other two, with the
+reason written next to it. The unused parameter was also removed, because it was
+a real smell regardless of who was complaining.
+**Found by:** running the full suite rather than only the check that had failed
+before.
+**Lesson:** this is the size-budget bug again, one level down — two copies of one
+truth, and the copies disagreeing. `compile_check.sh`'s own header says that if
+the flags drift "this tool stops predicting the real build and becomes worse than
+useless". The same sentence was true of `link_check.sh` and nobody had written it
+there. A checker's value is entirely in agreeing with the thing it predicts.
+
+---
+
 ## 2026 — Entries from the CI investigation
 
 ### CI had never run the kernel, and one line of Python was why

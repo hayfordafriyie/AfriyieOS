@@ -79,6 +79,13 @@ EXPECTED_MARKERS = [
     # that the kernel loaded one.
     "AF_EXEC_PREPARED",
     "AF_EXEC_RAN",
+    # v0.6. Format identification for every foreign format AfriyieOS intends to
+    # run — ELF, PE, Mach-O, DEX, APK, AAB, deb, rpm and the rest. It runs before
+    # any personality exists, on synthetic headers, and it is in this list because
+    # the detector is the one part of universal compatibility that can be verified
+    # today. A regression here is a regression in the foundation every personality
+    # will stand on.
+    "AF_BINFMT_OK",
 ]
 
 FATAL_MARKERS = [
