@@ -1,0 +1,38 @@
+# Normalize line endings across the project
+* text=auto eol=lf
+
+# Source
+*.c      text diff=cpp
+*.h      text diff=cpp
+*.cpp    text diff=cpp
+*.hpp    text diff=cpp
+*.cc     text diff=cpp
+*.asm    text
+*.S      text
+*.lds    text
+*.cmake  text
+CMakeLists.txt text
+
+# Docs
+*.md     text diff=markdown
+*.txt    text
+
+# Tooling
+*.sh     text eol=lf
+*.py     text eol=lf
+*.yml    text eol=lf
+*.json   text
+
+# Binary artifacts — never touch
+*.bin    binary
+*.img    binary
+*.iso    binary
+*.efi    binary
+*.elf    binary
+*.png    binary
+*.ttf    binary
+
+# Linguist: keep the OS languages prominent on GitHub
+docs/*           linguist-documentation
+third_party/*    linguist-vendored
+tools/*.py       linguist-detectable

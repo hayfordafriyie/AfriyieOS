@@ -1,0 +1,59 @@
+# ---- Build output ----
+build/
+build-*/
+out/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+.ninja_deps
+.ninja_log
+
+# ---- Compiled objects ----
+*.o
+*.a
+*.so
+*.d
+*.obj
+*.elf
+*.bin
+*.map
+*.sym
+*.efi
+*.iso
+*.img
+*.dsk
+*.vhd
+*.qcow2
+
+# ---- Toolchain / sysroot ----
+opt/
+cross/
+toolchain/
+
+# ---- Test & debug artifacts ----
+*.log
+serial*.txt
+*.ppm
+*.pgm
+tests/**/actual-*.png
+core
+gdb.txt
+qemu-monitor.sock
+
+# ---- Editors ----
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ---- OS junk ----
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# ---- Local env ----
+.env
+.env.local
