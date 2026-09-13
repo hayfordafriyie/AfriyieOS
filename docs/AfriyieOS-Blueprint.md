@@ -128,6 +128,10 @@ We accept IPC cost and engineer it down (§14 performance budgets).
 | ADR-009 | CMake 3.28+ (with Ninja) as the single build system | Cross-arch, toolchain files, IDE support | Hand-written Makefiles (fall apart at this scale) |
 | ADR-010 | Message-passing UI, not in-process widgets | A crashed app cannot take down the compositor | Everything in one GUI process |
 | ADR-011 | **Kernel `.text` budget raised from 64 KiB to 128 KiB at v0.3** | See below | — |
+| ADR-012 | **Foreign ABIs are user-space personalities, never kernel code** | [universal-compat.md](architecture/universal-compat.md) | — |
+| ADR-013 | **Detect file formats by walking inward to an actionable answer** | [universal-compat.md](architecture/universal-compat.md) | — |
+| ADR-014 | **The IPC cost of a personality is budgeted, not assumed** | [universal-compat.md](architecture/universal-compat.md) | — |
+| ADR-015 | **Compression formats are implemented in-tree, and "implemented" means byte-exact against vectors from another implementation** | See below | — |
 
 ### ADR-011 — the kernel size budget, revised
 
@@ -171,6 +175,66 @@ make the kernel slower on the boot path to buy nothing structural. Splitting the
 driver into a loadable module would be work spent on a mechanism that user-space
 drivers replace entirely. Neither addresses the actual cause, which is that code
 the architecture wants out of Ring 0 is currently in it.
+
+### ADR-015 — compression is implemented in-tree, and verified outside it
+
+**Context.** Reading every distribution's packages means reading every
+distribution's compression: gzip/DEFLATE (Alpine, older Debian), Zstandard
+(current Debian, Arch), xz/LZMA2 (a large share of both), zstd inside Snap. The
+question is whether AfriyieOS links a library or implements the format.
+
+**Decision. Implement them.** Three decoders now live in `libs/libafpkg/` —
+DEFLATE, Zstandard and XXH64 — written from the specifications, with no third-party
+code and no external dependency.
+
+**Why, given that zlib and libzstd are excellent, permissively licensed, and
+already written.** A decompressor is a *parser of untrusted input*, and it runs as
+the first thing that touches a package downloaded from the internet. Three
+concrete reasons:
+
+1. **It must run in the environment we control.** libzstd is ~40 000 lines with its
+   own allocation strategy; this library has no allocator at all, because user
+   space has none yet. Porting it would mean porting a memory model first.
+2. **The failure mode of a decompressor is a security boundary.** Accepting a
+   vendored parser means accepting its CVE history as ours, inside a package
+   manager that runs before anything else is trustworthy.
+3. **A format we cannot debug is a format we cannot fix.** Every one of the nine
+   Zstandard defects found at v0.10 was in code we wrote — and every one was found
+   by a byte-exact comparison, not by a reviewer.
+
+**The rule that makes this decision safe, and it is the operative half of this
+ADR.** *A decoder is not implemented until it is byte-exact against vectors
+produced by a different implementation.* Not "it produced output". Not "the length
+is right". Byte for byte, at multiple compression levels, on payloads chosen to
+reach different internal strategies — and the vectors must come from somewhere
+else, because a fixture written by the same person from the same understanding
+tests the understanding, not the format.
+
+That rule has teeth and it has already bitten. Zstandard was committed at v0.10
+**partially working, at 21 of 48 vectors, and said so in a status header**. Six of
+the nine remaining defects produced output of exactly the right length with the
+wrong bytes; none would have been visible to any test that did not compare bytes.
+DEFLATE was in the same position at v0.9 and the same rule caught its two bugs.
+
+**Consequences.** Roughly 2 000 lines of parsing code to maintain, and a
+permanent obligation: every future compression format (LZMA2 next) is a
+specification to read, not a dependency to add. In exchange, the library has zero
+external dependencies, no allocator requirement, no build-system integration for
+a foreign project, and its entire behaviour is in this repository and covered by
+`tools/native_test.sh` in milliseconds.
+
+**Alternatives rejected.** *Link zlib and libzstd.* Fastest to a working package
+manager, and rejected for the three reasons above — the decisive one being that a
+malloc-based library cannot run in the environment this has to run in. *Vendor
+with a minimal port.* Combines the maintenance cost of both options. *Shell out to
+the system's decompressor.* Not available on a machine that is booting, and it
+would make the package manager's behaviour depend on the host's tool versions.
+
+**What this does not claim.** Writing our own is not a security guarantee — it is
+a smaller, auditable, dependency-free surface with *our* bugs in it, and the last
+count was nine. The mitigation is the vectors, the fuzzing that has not happened
+yet, and the fact that every rejection path is an explicit error rather than
+a guess.
 
 ---
 
@@ -879,8 +943,9 @@ of what will **not** work are in
 | **v0.7** | Exec server as a user-space service; personalities become IPC servers | An unrecognised file produces a clear "no personality" error, not a panic | — |
 | **v0.7** | Capability transfer between processes (the reply path currently carries an endpoint ID rather than a transferred capability) | An endpoint capability handed from a server to a client, verified across two processes | — |
 | **v0.8** | Linux syscall translator | A real static `busybox` runs; its output is asserted | — |
-| **v0.9** | Package readers: deb, rpm, pacman, apk | Host tests parse real packages from each ecosystem | 🔨 **deb container done** — see below |
-| **v0.9a** | **DEFLATE (fixed + dynamic Huffman) and Zstandard** | A real `dpkg-deb` package reads | — |
+| **v0.9** | Package readers: deb, rpm, pacman, apk | Host tests parse real packages from each ecosystem | 🔨 **apk + deb + pacman done**, rpm missing — see below |
+| **v0.9a** | **DEFLATE (fixed + dynamic Huffman) and Zstandard** | A real `dpkg-deb` package reads | ✅ **done** — full DEFLATE at v0.9, Zstandard at v0.10 |
+| **v0.10** | **Zstandard (RFC 8878) in full, with XXH64 content checksums** | 48 frames from the reference implementation, all byte-exact | ✅ **done** |
 | **v1.0** | Installer, AFS versioned store, AppImage | Install a real package, reboot, run it | — |
 | **v1.3** | PE loader + Win32 API subset | A real Win32 console program runs | — |
 | **v1.4** | Android: DEX/ART + APK install | An APK with a native activity runs | — |
@@ -900,6 +965,18 @@ of what will **not** work are in
 >
 > Both refusals are precise and name the exact gap. The evidence is committed at
 > `docs/releases/evidence/v0.9.0-real-deb-boundary.txt`. See v0.9a above.
+>
+> **And what finishing Zstandard actually cost, measured rather than assumed.**
+> The decoder was committed at v0.10 partially working — 21 of 42 vectors, raw and
+> RLE blocks only — with the remaining failure named. Nine separate defects stood
+> between there and 48 of 48. Six of them produced output of the **correct length
+> with the wrong bytes**, which is why nothing but a byte-for-byte comparison
+> against vectors from a different implementation could find them. They are all
+> in the debug log, and the shape of the list is the interesting part: two
+> ordering mistakes, one transcribed table with the wrong tail, one conditional
+> bit width, one off-by-one in a termination condition, two byte-alignment
+> assumptions, one misinterpreted exception-to-a-rule, and one field that was read
+> and discarded. Every one of them is written down in the specification.
 
 **The ordering is the plan.** Linux first, because its ABI is documented, finite
 and stable, and because `musl` and `busybox` give a small dependency-free target

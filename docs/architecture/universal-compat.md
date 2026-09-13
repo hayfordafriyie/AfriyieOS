@@ -195,6 +195,31 @@ not a religion. Dependency resolution across ecosystems is then one solver over
 one graph, which is also how the same library ends up installed once instead of
 five times.
 
+#### 3.3.1 Where the readers actually stand
+
+| Ecosystem | Container | Reader | Verified against |
+| --- | --- | --- | --- |
+| Alpine `.apk` | gzip chain of tars | **working** | 5 real packages from `dl-cdn.alpinelinux.org` |
+| Arch `.pkg.tar.zst` | zstd tar | **working** | synthetic packages, byte-exact |
+| Debian/Ubuntu `.deb` | `ar` + `control.tar.gz` + `data.tar.gz` | **working** | a real `dpkg-deb` package |
+| Debian `.deb` (modern) | `ar` + `control.tar.zst` + `data.tar.zst` | zstd is working; the **control** member is not yet wired to it | — |
+| Fedora/openSUSE `.rpm` | binary header + archive | not written | — |
+| `.deb` control member in xz | LZMA2 | refused by name | — |
+
+The two remaining gaps are different in kind and worth saying so plainly. The
+`.rpm` reader is ordinary work — a tag directory instead of a tar header, and
+nothing conceptually new. **xz is the one that matters**: it is what a
+significant share of current Debian and Fedora packages still use for at least
+one member, LZMA2 is a different algorithm from both DEFLATE and Zstandard, and
+it cannot be reached by extending either.
+
+The zstd decoder itself is done. It decodes 48 frames produced by the reference
+implementation — six payload shapes at seven compression levels, plus the same
+six carrying content checksums — all byte for byte, and it verifies XXH64
+checksums when a frame has one. Nine separate defects stood between "decodes raw
+blocks" and "decodes what a package manager writes"; they are all in the debug
+log, and six of them produced output of the right length with the wrong bytes.
+
 ---
 
 ## 4. Milestones

@@ -1,34 +1,54 @@
 // SPDX-License-Identifier: MIT
 //
 // =============================================================================
-// STATUS: INCOMPLETE. COMPILED, NOT WIRED TO ANY TEST, NOT A ZSTD DECODER YET.
+// STATUS: COMPLETE FOR WHAT IT CLAIMS. 48 of 48 vectors pass byte for byte, and
+// it is in the test gate (tests/native/test_afpkg.c, run by tools/native_test.sh).
 //
-// Measured against the 42 vectors in build/fixtures (tools/pkgsynth.py):
+// It was committed one milestone ago as INCOMPLETE, at 21 of 42, with a note
+// saying where to look next. The note named the compressed-block path and that
+// was right, but the remaining bugs were not in one place: NINE separate defects
+// were between "21 of 42" and "42 of 42", and six of them are the kind that
+// produce output of the right LENGTH with the wrong bytes.
 //
-//   21 of 42 pass — every case whose blocks are RAW or RLE:
-//       empty, one, random, at all seven levels.
-//   That means the frame header, the block loop, raw blocks, RLE blocks, the
-//   backward bit reader, FSE table construction, the literals-header parse and
-//   the FSE weight path have all been exercised and are right.
+//   1. The match-length predefined distribution had its low-probability tail in
+//      the wrong place — -1 at 48..52 instead of 46..52. It still summed to
+//      exactly 64, so every consistency check the table builder has passed.
+//   2. The symbol lookup and the state renormalisation were one operation. The
+//      format separates them: extras are read OF, ML, LL with the states as they
+//      are, and only then are the states updated LL, ML, OF — and NOT after the
+//      last sequence.
+//   3. The repeat-offset rules. When literals_length is 0 the whole mapping
+//      shifts by one (1 means Repeat2, 2 means Repeat3, 3 means Repeat1 - 1) and
+//      the history is STILL updated. Treating "3 with no literals" as a read that
+//      leaves the history alone is the natural reading and it is wrong.
+//   4. FSE count tables do not always use the full bit width. The low nb_bits-1
+//      bits are read first and the top bit is fetched only when needed; always
+//      reading nb_bits gets the right VALUE and the wrong bit position.
+//   5. The FSE decoder does not stop where the bits stop. It emits one more
+//      symbol from each state — two more, interleaved — because the reference
+//      reader refills in whole bytes and reports overflow after the fact.
+//   6. The raw/RLE literals header. Size_Format is a two-bit field whose values
+//      00 and 10 mean the SAME thing, and the multi-byte size does not start at
+//      bit 3. Reading it as one bit made a 39-byte literal section 78 bytes long.
+//   7. Each FSE table description is byte-aligned. Feeding one bit reader into
+//      all three leaves the second one a bit-shift out, and its counts still sum
+//      to the right total, so it looks like a table and decodes to wrong symbols.
+//   8. The frame content size adds 256 when the field is two bytes wide
+//      (RFC 8878 §3.1.1.1.4) — an oddity, documented, and easy to skip.
+//   9. The content checksum was read and ignored. XXH64 is now implemented and
+//      the frame's checksum is VERIFIED, because without it a flipped bit inside
+//      literal data decodes to a valid frame, a valid tar, and a package that
+//      installs with one wrong byte in it.
 //
-//   21 of 42 fail — every case with a COMPRESSED block:
-//       constant, text, distances.
-//   Two bugs have already been found and fixed this way: the sequence
-//   symbol-compression modes byte is laid out LL, OF, ML from the BOTTOM, and
-//   zstd's Huffman codes are NOT canonical in the usual order — they are laid
-//   out from the weights with the LONGEST codes at the lowest table indices.
-//   At least one more remains, in the compressed-block path.
-//
-//   To continue: build with -DZSTD_TRACE and run build/zt against a failing
-//   vector. The tracing is already in place and is compiled out by default.
-//
-// It is KEPT rather than reverted because roughly eight hundred lines of FSE,
-// Huffman and frame handling are verified in part, and throwing them away
-// guarantees writing them again. It is NOT in the test gate, and nothing calls
-// it, so it cannot make a green run mean less than it says.
-//
-// The honest summary: this file is where Zstandard support will come from, and
-// it is not Zstandard support yet.
+// WHAT IS DELIBERATELY NOT HERE:
+//   * Dictionaries. A frame that names one is refused with AF_ERR_NOTSUP rather
+//     than decoded against nothing. Distribution packages do not use them.
+//   * Multiple frames in one buffer. This decodes one frame; a caller with a
+//     concatenated stream calls it again. The frame length is not returned yet,
+//     which is the missing piece and is named here rather than discovered.
+//   * Skirmish frames (magic 0x184D2A5?), which are skippable metadata.
+//   * Speed. Both bit readers are a bit at a time. That is the right first
+//     version and it is the reason the vectors could localise each bug.
 // =============================================================================
 //
 // AfriyieOS — Zstandard decoding
@@ -106,23 +126,6 @@ static void zd_memset(void *dst, int value, af_size n)
 #define ZSTD_HUF_MAX_SYMBOLS 256
 
 #define ZSTD_MAX_LITERALS (128 * 1024)
-
-// The three ordering choices the format fixes and does not mark. They are
-// switches only so they can be SEARCHED against the vectors; once the right
-// combination is known the constants are folded in and these disappear.
-//
-//   0 = states LL, OF, ML      1 = states LL, ML, OF
-//   0 = codes LL, ML, OF       1 = codes OF, ML, LL
-//   0 = extras OF, ML, LL      1 = extras LL, ML, OF
-#ifndef ZSTD_STATE_ORDER
-#define ZSTD_STATE_ORDER 1
-#endif
-#ifndef ZSTD_CODE_ORDER
-#define ZSTD_CODE_ORDER 1
-#endif
-#ifndef ZSTD_EXTRA_ORDER
-#define ZSTD_EXTRA_ORDER 1
-#endif
 
 static af_u32 highbit32(af_u32 v)
 {
@@ -226,6 +229,22 @@ static af_size fb_bytes_used(const fbits_t *b)
 {
     return (b->bitpos + 7) / 8;
 }
+
+// EACH TABLE DESCRIPTION ENDS ON A BYTE BOUNDARY, AND THE NEXT ONE STARTS THERE.
+//
+// The forward stream is a bit stream and the descriptions look consecutive, so
+// the natural implementation feeds one reader into all three. The reference
+// implementation does not: FSE_readNCount reports how many BYTES it consumed and
+// the caller advances a byte pointer. The two agree only when every description
+// happens to end on a byte — and when two tables are present and the first ends
+// mid-byte, the second is read one bit-shift out. Its normalized counts still sum
+// to exactly the right total, so it looks like a valid table and decodes to
+// symbols that are merely wrong.
+static void fb_align(fbits_t *b)
+{
+    b->bitpos = (b->bitpos + 7u) & ~(af_size)7u;
+}
+
 
 // =============================================================================
 // FSE
@@ -364,28 +383,46 @@ static af_status_t fse_read_ncount(fbits_t *b, af_i16 *norm,
         }
 
         const af_i32 max = (af_i32)((2 * threshold - 1) - (af_u32)remaining);
-        const af_u32 raw = fb_read(b, nb_bits);
+
+        // THE COUNT IS NOT ALWAYS nb_bits WIDE, AND THAT IS NOT AN OPTIMISATION
+        // THE READER MAY IGNORE.
+        //
+        // The format encodes a count in nb_bits bits only when it needs them:
+        // the low nb_bits-1 bits are read first, and the top bit is fetched ONLY
+        // if those already guarantee the value is not below `max`. A decoder that
+        // always reads nb_bits gets the same VALUE — the low bits are the same
+        // either way — but advances the bit position by one too many, and every
+        // symbol after it is decoded from the wrong offset.
+        //
+        // That is why the table still looked plausible: tableLog was right, the
+        // symbol counts summed to the right total, and only the alphabet size and
+        // the last few counts were wrong. It took a Huffman weight table with the
+        // wrong number of symbols to make it visible.
+        const af_u32 low = fb_read(b, nb_bits - 1);
+        af_i32 count;
+
+        if ((af_i32)low < max) {
+            count = (af_i32)low;
+        } else {
+            const af_u32 ext = fb_read(b, 1);
+            count = (af_i32)(low | (ext << (nb_bits - 1)));
+            if (count >= (af_i32)threshold) {
+                count -= max;
+            }
+        }
+
         if (b->overrun) {
             *why = "FSE count table ended inside a count";
             return AF_ERR_FS_CORRUPT;
         }
 
-        af_i32 count;
-        if ((af_i32)(raw & (threshold - 1)) < max) {
-            count = (af_i32)(raw & (threshold - 1));
-        } else {
-            count = (af_i32)(raw & (2 * threshold - 1));
-            if (count >= (af_i32)threshold) {
-                count -= max;
-            }
-        }
         count--;   // the transmitted value is offset by one
 
         remaining -= (count < 0) ? -count : count;
         norm[charnum++] = (af_i16)count;
         previous0 = (count == 0);
 
-        while (remaining < (af_i32)threshold && nb_bits > 1) {
+        while (remaining < (af_i32)threshold) {
             nb_bits--;
             threshold >>= 1;
         }
@@ -413,6 +450,35 @@ static af_u32 fse_decode(fse_state_t *st, zbits_t *z)
     const af_u32 low = zb_read(z, entry->nb_bits);
     st->state = (af_u32)entry->new_state + low;
     return symbol;
+}
+
+// A SEQUENCE DECODER CANNOT USE fse_decode, AND THAT IS THE POINT OF THESE TWO.
+//
+// fse_decode reads the symbol AND immediately consumes the bits that renormalise
+// the state. For the Huffman weight tables that is exactly right. For sequences
+// it is wrong, because the format interleaves the three symbol types in THREE
+// DIFFERENT ORDERS and the renormalisation belongs to a different step from the
+// symbol:
+//
+//     initial states   LL, OF, ML
+//     extra bits       OF, ML, LL        <- read with the states AS THEY ARE
+//     state updates    LL, ML, OF        <- and NOT for the last sequence
+//
+// Folding the update into the symbol lookup reads the LL renormalisation bits
+// before the offset's extra bits, so every sequence after the first is decoded
+// from the wrong position and the stream is exhausted early. That is a decoder
+// that produces plausible rubbish and reports "the bitstream ended in the middle
+// of a sequence" — which is exactly what this one did.
+static af_u32 fse_peek(const fse_state_t *st)
+{
+    return st->dt->table[st->state].symbol;
+}
+
+static void fse_advance(fse_state_t *st, zbits_t *z)
+{
+    const fse_entry_t *entry = &st->dt->table[st->state];
+    const af_u32 low = zb_read(z, entry->nb_bits);
+    st->state = (af_u32)entry->new_state + low;
 }
 
 // =============================================================================
@@ -474,6 +540,8 @@ static af_status_t huf_build(huf_dt_t *h, const af_u8 *weights,
     // every decode after it would be off by an unknown amount.
     const af_u32 total = 1u << table_log;
     const af_u32 rest = total - weight_total;
+    ZTRACE("huf: n_weights=%u wtotal=%u tablelog=%u rest=%u", n_weights,
+           (unsigned)weight_total, (unsigned)table_log, (unsigned)rest);
     if (rest == 0 || (rest & (rest - 1)) != 0) {
         *why = "Huffman weights do not fill the code space exactly";
         return AF_ERR_FS_CORRUPT;
@@ -606,16 +674,57 @@ static af_status_t huf_read_weights(const af_u8 *data, af_size len,
         fse_init_state(&s1, &z, &dt);
         fse_init_state(&s2, &z, &dt);
 
+        // ZSTD'S FSE DECODER DOES NOT STOP WHERE THE BITS STOP. It stops one
+        // symbol LATER.
+        //
+        // Its bit reader refills a register a byte at a time and reports
+        // "overflow" when a refill goes past the start of the stream; at that
+        // point both live states still hold valid symbols and both are emitted.
+        // An exact bit-at-a-time reader that stops the moment the last bit is
+        // consumed therefore loses the final two weights — and loses them
+        // invisibly, because the missing weights are the high symbols that happen
+        // to be zero, so the table still looks like a table and only the symbol
+        // COUNT is wrong. Everything downstream then fails at a place that has
+        // nothing to do with the cause.
         af_u32 n = 0;
-        while (!zb_empty(&z) && n + 2 <= ZSTD_HUF_MAX_SYMBOLS) {
+        for (;;) {
+            if (n + 2 > ZSTD_HUF_MAX_SYMBOLS) {
+                *why = "Huffman weight description is longer than the format allows";
+                return AF_ERR_FS_CORRUPT;
+            }
+
             weights[n++] = (af_u8)fse_decode(&s1, &z);
+            if (z.overrun) {
+                weights[n++] = (af_u8)fse_decode(&s2, &z);
+                break;
+            }
+
             weights[n++] = (af_u8)fse_decode(&s2, &z);
+            if (z.overrun) {
+                weights[n++] = (af_u8)fse_decode(&s1, &z);
+                break;
+            }
         }
 
         if (n < 2) {
             *why = "Huffman weight description decoded too few weights";
             return AF_ERR_FS_CORRUPT;
         }
+
+#ifdef ZSTD_TRACE
+        ZTRACE("weights: FSE n=%u tablelog=%u bits left %lld", n,
+               (unsigned)table_log, (long long)z.bitpos);
+        {
+            char line[256];
+            int at = 0;
+            for (af_u32 q = 0; q < n && at < 200; q++) {
+                at += snprintf(line + at, sizeof(line) - (size_t)at, "%u ",
+                               (unsigned)weights[q]);
+            }
+            line[at] = '\0';
+            ZTRACE("weights: %s", line);
+        }
+#endif
 
         *n_out = n;
         *consumed = 1 + compressed;
@@ -732,10 +841,20 @@ static const af_i16 s_ll_default[36] = {
     -1, -1, -1, -1
 };
 
+// RFC 8878 §3.1.1.3.2.2.2. TRANSCRIBED, NOT DERIVED — and the tail is the part
+// that matters and the part that was wrong.
+//
+// Symbols 46..52 are the seven low-probability ones. This array previously ended
+// its run of 1s at index 47 and put only five -1s at 48..52, which still sums to
+// exactly 64 and so passed every internal consistency check the builder has. It
+// is a distribution that is self-consistent and wrong: states 57 and 56 decoded
+// to match-length codes 45 and 46 instead of 52 and 51, so a match length of
+// 39998 came back as 41. Nothing detects that except an answer compared against
+// something outside this file.
 static const af_i16 s_ml_default[53] = {
     1, 4, 3, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1,
     1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, -1, -1,
     -1, -1, -1, -1, -1
 };
 
@@ -801,20 +920,40 @@ static af_status_t read_literals(const af_u8 *data, af_size len,
     bool four_streams = false;
 
     if (type == 0 || type == 1) {
-        // Raw and RLE use ONE bit of size format, not two — the same field is a
-        // different width depending on the type.
-        const af_u32 fmt = (b0 >> 2) & 1u;
+        // Raw and RLE use the same 2-bit Size_Format field as everything else,
+        // but only three of its four values exist and the two single-byte ones
+        // are NOT adjacent:
+        //
+        //     00 or 10   1 byte,  Regenerated_Size = header[0] >> 3   (5 bits)
+        //     01         2 bytes, = (header[0] >> 4) + (header[1] << 4)
+        //     11         3 bytes, = (header[0] >> 4) + (header[1] << 4)
+        //                                    + (header[2] << 12)
+        //
+        // Reading the field as one bit and then taking the size out of bits 3+
+        // for the multi-byte forms gives a number that is plausible, large, and
+        // wrong: this decoder read a 39-byte literal section as 78 bytes, so the
+        // sequences section started 39 bytes late and the first thing it saw was
+        // an offset table where a count belonged.
+        const af_u32 fmt = (b0 >> 2) & 3u;
 
-        if (fmt == 0) {
-            regenerated = (b0 >> 3) & 0x1Fu;
+        if (fmt == 0 || fmt == 2) {
+            regenerated = (af_u32)b0 >> 3;
             header = 1;
-        } else {
+        } else if (fmt == 1) {
             if (len < 2) {
                 *why = "literals header is truncated";
                 return AF_ERR_FS_CORRUPT;
             }
-            regenerated = ((af_u32)(b0 >> 3) & 0x1Fu) | ((af_u32)data[1] << 5);
+            regenerated = ((af_u32)data[0] >> 4) | ((af_u32)data[1] << 4);
             header = 2;
+        } else {
+            if (len < 3) {
+                *why = "literals header is truncated";
+                return AF_ERR_FS_CORRUPT;
+            }
+            regenerated = ((af_u32)data[0] >> 4) | ((af_u32)data[1] << 4) |
+                          ((af_u32)data[2] << 12);
+            header = 3;
         }
         compressed = (type == 0) ? regenerated : 1;
     } else {
@@ -1040,10 +1179,14 @@ static af_status_t seq_table_read(seq_table_t *tab, fbits_t *fb,
     case 1:
         tab->is_rle = true;
         tab->rle_symbol = (af_u8)fb_read(fb, 8);
+        ZTRACE("       table rle symbol=%u (max %u) at bit %lu",
+               (unsigned)tab->rle_symbol, (unsigned)max_symbol,
+               (unsigned long)fb->bitpos);
         if (fb->overrun || tab->rle_symbol > max_symbol) {
             *why = "RLE sequence table names a symbol outside its alphabet";
             return AF_ERR_FS_CORRUPT;
         }
+        fb_align(fb);
         return AF_OK;
 
     case 2: {
@@ -1064,6 +1207,22 @@ static af_status_t seq_table_read(seq_table_t *tab, fbits_t *fb,
             *why = "FSE sequence table is malformed";
             return AF_ERR_FS_CORRUPT;
         }
+#ifdef ZSTD_TRACE
+        {
+            char line[400];
+            int at2 = 0;
+            line[0] = '\0';
+            for (af_u32 q = 0; q <= table_max && at2 < 340; q++) {
+                if (norm[q] != 0) {
+                    at2 += snprintf(line + at2, sizeof(line) - (size_t)at2,
+                                    "%u:%d ", (unsigned)q, (int)norm[q]);
+                }
+            }
+            ZTRACE("       table max=%u log=%u bits=%lu  %s", (unsigned)table_max,
+                   (unsigned)table_log, (unsigned long)fb->bitpos, line);
+        }
+#endif
+        fb_align(fb);
         return AF_OK;
     }
 
@@ -1077,21 +1236,20 @@ static af_status_t seq_table_read(seq_table_t *tab, fbits_t *fb,
     }
 }
 
-static af_u32 seq_table_symbol(const seq_table_t *tab, fse_state_t *state,
-                               zbits_t *z, bool *have_state)
+// An RLE table produces the same symbol every time and uses no bits and no
+// state. Treating it as an FSE table would read bits that are not there and
+// desynchronise everything after it.
+static af_u32 seq_peek(const seq_table_t *tab, const fse_state_t *st, bool have)
 {
-    if (tab->is_rle) {
-        // An RLE table produces the same symbol every time and uses no bits and
-        // no state. Treating it as an FSE table would read bits that are not
-        // there and desynchronise everything after it.
-        return tab->rle_symbol;
-    }
+    return tab->is_rle ? tab->rle_symbol : (have ? fse_peek(st) : 0u);
+}
 
-    if (!*have_state) {
-        fse_init_state(state, z, &tab->dt);
-        *have_state = true;
+static void seq_advance(const seq_table_t *tab, fse_state_t *st, zbits_t *z,
+                        bool have)
+{
+    if (!tab->is_rle && have) {
+        fse_advance(st, z);
     }
-    return fse_decode(state, z);
 }
 
 // =============================================================================
@@ -1182,6 +1340,9 @@ static af_status_t decode_compressed_block(const af_u8 *data, af_size len,
     // block report "a sequence table repeats a previous one, but there is none":
     // the literal-length mode was being read out of the reserved bits.
     const af_u8 modes = seq[at++];
+    ZTRACE("       modes byte 0x%02x at %lu (ll=%u of=%u ml=%u)", modes,
+           (unsigned long)(at - 1), (unsigned)((modes >> 6) & 3u),
+           (unsigned)((modes >> 4) & 3u), (unsigned)((modes >> 2) & 3u));
     if ((modes & 0x03u) != 0) {
         *why = "sequence symbol-compression modes has reserved bits set";
         return AF_ERR_FS_CORRUPT;
@@ -1241,36 +1402,33 @@ static af_status_t decode_compressed_block(const af_u8 *data, af_size len,
 
     // --- states, initialised LL, OF, ML --------------------------------------
     //
-    // The order is fixed by the format and is NOT the order the codes are
-    // decoded in. This is the sort of detail that makes a decoder ninety per
-    // cent right and completely wrong.
+    // RFC 8878 §3.1.1.3.2.1.3: "It starts with Literals_Length_State, followed
+    // by Offset_State, and finally Match_Length_State." The order is fixed by the
+    // format and is NOT the order the codes are read in, nor the order the extra
+    // bits are read in, nor the order the states are updated in. Four different
+    // orders in one loop, none of them marked.
     fse_state_t s_ll, s_of, s_ml;
     bool have_ll = false, have_of = false, have_ml = false;
 
-#if ZSTD_STATE_ORDER == 0
     if (!ll_tab.is_rle) { fse_init_state(&s_ll, &z, &ll_tab.dt); have_ll = true; }
     if (!of_tab.is_rle) { fse_init_state(&s_of, &z, &of_tab.dt); have_of = true; }
     if (!ml_tab.is_rle) { fse_init_state(&s_ml, &z, &ml_tab.dt); have_ml = true; }
-#else
-    if (!ll_tab.is_rle) { fse_init_state(&s_ll, &z, &ll_tab.dt); have_ll = true; }
-    if (!ml_tab.is_rle) { fse_init_state(&s_ml, &z, &ml_tab.dt); have_ml = true; }
-    if (!of_tab.is_rle) { fse_init_state(&s_of, &z, &of_tab.dt); have_of = true; }
-#endif
+
+    ZTRACE("       states ll=%u/%u of=%u/%u ml=%u/%u rle=%d%d%d",
+           s_ll.state, ll_tab.dt.table_log, s_of.state, of_tab.dt.table_log,
+           s_ml.state, ml_tab.dt.table_log, (int)ll_tab.is_rle, (int)of_tab.is_rle,
+           (int)ml_tab.is_rle);
 
     af_u32 rep0 = 1, rep1 = 4, rep2 = 8;
     af_size lit_at = 0;
 
     for (af_u32 i = 0; i < count; i++) {
-        // Codes, in the order LL, ML, OF.
-#if ZSTD_CODE_ORDER == 0
-        const af_u32 ll_code = seq_table_symbol(&ll_tab, &s_ll, &z, &have_ll);
-        const af_u32 ml_code = seq_table_symbol(&ml_tab, &s_ml, &z, &have_ml);
-        const af_u32 of_code = seq_table_symbol(&of_tab, &s_of, &z, &have_of);
-#else
-        const af_u32 of_code = seq_table_symbol(&of_tab, &s_of, &z, &have_of);
-        const af_u32 ml_code = seq_table_symbol(&ml_tab, &s_ml, &z, &have_ml);
-        const af_u32 ll_code = seq_table_symbol(&ll_tab, &s_ll, &z, &have_ll);
-#endif
+        // The codes come from the states without touching the bitstream. Reading
+        // the symbol and renormalising the state are separate steps; see the
+        // comment on fse_peek.
+        const af_u32 ll_code = seq_peek(&ll_tab, &s_ll, have_ll);
+        const af_u32 ml_code = seq_peek(&ml_tab, &s_ml, have_ml);
+        const af_u32 of_code = seq_peek(&of_tab, &s_of, have_of);
 
         if (ll_code > ZSTD_MAX_LL_CODE || ml_code > ZSTD_MAX_ML_CODE ||
             of_code > ZSTD_MAX_OFFSET_CODE) {
@@ -1278,20 +1436,15 @@ static af_status_t decode_compressed_block(const af_u8 *data, af_size len,
             return AF_ERR_FS_CORRUPT;
         }
 
-        // Extra bits, in the order OF, ML, LL.
-#if ZSTD_EXTRA_ORDER == 0
+        // "Decoding starts by reading the Number_of_Bits required to decode
+        // offset. It does the same for Match_Length and then for
+        // Literals_Length." — OF, ML, LL, which is the reverse of the state
+        // order above and matches neither the code order nor the update order.
         const af_u32 offset_value = of_base(of_code) + zb_read(&z, of_code);
         const af_u32 match_length =
             s_ml_base[ml_code] + zb_read(&z, s_ml_bits[ml_code]);
         const af_u32 literal_length =
             s_ll_base[ll_code] + zb_read(&z, s_ll_bits[ll_code]);
-#else
-        const af_u32 literal_length =
-            s_ll_base[ll_code] + zb_read(&z, s_ll_bits[ll_code]);
-        const af_u32 match_length =
-            s_ml_base[ml_code] + zb_read(&z, s_ml_bits[ml_code]);
-        const af_u32 offset_value = of_base(of_code) + zb_read(&z, of_code);
-#endif
 
         ZTRACE("  seq %u: ll=%u ml=%u of=%u -> llv=%u mlv=%u ofv=%u  bits left %lld",
                i, ll_code, ml_code, of_code, literal_length, match_length,
@@ -1303,6 +1456,24 @@ static af_status_t decode_compressed_block(const af_u8 *data, af_size len,
         }
 
         // --- the offset, including the repeat scheme --------------------------
+        //
+        // RFC 8878 §3.1.1.5. THREE rules, and the third is the one everybody
+        // gets wrong:
+        //
+        //   1. The history is rep0 = most recent, rep1, rep2.
+        //   2. "when the current sequence's literals_length is 0, repeated
+        //      offsets are shifted by 1" — so offset_value 1 means rep1 rather
+        //      than rep0, 2 means rep2, and 3 means rep0 - 1.
+        //   3. The history is updated after EVERY sequence. When the offset came
+        //      out of the list the list is rotated so the used entry becomes the
+        //      most recent; when it did not — offset_value > 3, or offset_value 3
+        //      with no literals, where the value is derived rather than reused —
+        //      the history is shifted and the resolved offset is inserted.
+        //
+        // Treating offset_value 3 with no literals as a read that leaves the
+        // history alone is the natural reading and it is wrong: the offset after
+        // it is a value that has never been seen, and the next sequence that
+        // refers to the history must find it in first place.
         af_u32 offset;
 
         if (offset_value > 3) {
@@ -1310,23 +1481,33 @@ static af_status_t decode_compressed_block(const af_u8 *data, af_size len,
             rep2 = rep1;
             rep1 = rep0;
             rep0 = offset;
+        } else if (literal_length == 0) {
+            if (offset_value == 1) {
+                offset = rep1;
+                rep1 = rep0;
+                rep0 = offset;
+            } else if (offset_value == 2) {
+                offset = rep2;
+                rep2 = rep1;
+                rep1 = rep0;
+                rep0 = offset;
+            } else {
+                offset = rep0 - 1;             // rep0 is never 0
+                rep2 = rep1;
+                rep1 = rep0;
+                rep0 = offset;
+            }
         } else if (offset_value == 1) {
-            offset = rep0;
+            offset = rep0;                     // already the most recent: no change
         } else if (offset_value == 2) {
             offset = rep1;
             rep1 = rep0;
             rep0 = offset;
         } else {
-            if (literal_length == 0) {
-                // The special case that appears in exactly one place in the
-                // format's description and in every stream that fails without it.
-                offset = (rep0 > 0) ? rep0 - 1 : 0;
-            } else {
-                offset = rep2;
-                rep2 = rep1;
-                rep1 = rep0;
-                rep0 = offset;
-            }
+            offset = rep2;
+            rep2 = rep1;
+            rep1 = rep0;
+            rep0 = offset;
         }
 
         if (offset == 0) {
@@ -1356,6 +1537,37 @@ static af_status_t decode_compressed_block(const af_u8 *data, af_size len,
             *why = "output buffer is full";
             return AF_ERR_TOOMANY;
         }
+
+        // "If it is not the last sequence in the block, the next operation is to
+        // update states... Literals_Length_State is updated, followed by
+        // Match_Length_State, and then Offset_State."
+        //
+        // SKIPPING THE LAST UPDATE IS NOT AN OPTIMISATION. The final states are
+        // never used again, so the compressor never writes their renormalisation
+        // bits; updating them would consume bits that do not exist and truncate
+        // the stream by up to 20 bits — which is the whole remaining bitstream in
+        // a one-sequence block.
+        if (i + 1 < count) {
+            seq_advance(&ll_tab, &s_ll, &z, have_ll);
+            seq_advance(&ml_tab, &s_ml, &z, have_ml);
+            seq_advance(&of_tab, &s_of, &z, have_of);
+
+            if (z.overrun) {
+                *why = "sequences bitstream ended while updating FSE states";
+                return AF_ERR_FS_CORRUPT;
+            }
+        }
+    }
+
+    // RFC 8878 §3.1.1.3.2.1.3: "At the end, the bitstream shall be entirely
+    // consumed; otherwise, the bitstream is considered corrupted." Checking it
+    // turns every remaining desynchronisation into a named failure instead of
+    // output that merely looks wrong.
+    if (!zb_empty(&z)) {
+        ZTRACE("       %lld bits left unconsumed at the end of the block",
+               (long long)z.bitpos);
+        *why = "sequences bitstream was not fully consumed";
+        return AF_ERR_FS_CORRUPT;
     }
 
     while (lit_at < lit_len) {
@@ -1373,6 +1585,121 @@ static af_status_t decode_compressed_block(const af_u8 *data, af_size len,
     *have_previous = true;
 
     return AF_OK;
+}
+
+// =============================================================================
+// XXH64, for the frame's optional content checksum
+//
+// A Zstandard frame's Content_Checksum is the low 32 bits of XXH64 of the
+// DECOMPRESSED data with seed 0. It is optional, and it is the only thing in the
+// format that detects corruption which still decodes — a flipped bit inside
+// literal data usually produces a perfectly valid frame, a perfectly valid tar,
+// and a package that installs with one wrong byte in it.
+//
+// The frame header says whether the checksum is there, so a frame without one is
+// not a failure; a frame WITH one that disagrees is. That is the whole contract,
+// and it is worth having: it is the same guarantee the gzip reader already gives
+// through CRC32, and without it the two readers would offer different protection
+// for the same class of bug.
+//
+// The algorithm is XXH64 as published, and it is verified here against frames the
+// reference implementation produced with its checksum flag on — which is the only
+// reason to trust it.
+// =============================================================================
+#define XXH_PRIME64_1 0x9E3779B185EBCA87ull
+#define XXH_PRIME64_2 0xC2B2AE3D27D4EB4Full
+#define XXH_PRIME64_3 0x165667B19E3779F9ull
+#define XXH_PRIME64_4 0x85EBCA77C2B2AE63ull
+#define XXH_PRIME64_5 0x27D4EB2F165667C5ull
+
+static af_u64 rotl64(af_u64 x, af_u32 r)
+{
+    return (x << r) | (x >> (64u - r));
+}
+
+static af_u64 rd64le(const af_u8 *p)
+{
+    af_u64 v = 0;
+    for (af_u32 i = 0; i < 8; i++) {
+        v |= (af_u64)p[i] << (8u * i);
+    }
+    return v;
+}
+
+static af_u64 rd32le(const af_u8 *p)
+{
+    return (af_u64)p[0] | ((af_u64)p[1] << 8) | ((af_u64)p[2] << 16) |
+           ((af_u64)p[3] << 24);
+}
+
+static af_u64 xxh64_round(af_u64 acc, af_u64 input)
+{
+    acc += input * XXH_PRIME64_2;
+    acc = rotl64(acc, 31);
+    acc *= XXH_PRIME64_1;
+    return acc;
+}
+
+static af_u64 xxh64_merge(af_u64 acc, af_u64 val)
+{
+    acc ^= xxh64_round(0, val);
+    return acc * XXH_PRIME64_1 + XXH_PRIME64_4;
+}
+
+static af_u64 xxh64(const af_u8 *p, af_size len)
+{
+    const af_u8 *const end = p + len;
+    af_u64 h;
+
+    if (len >= 32) {
+        const af_u8 *const limit = end - 32;
+        af_u64 v1 = XXH_PRIME64_1 + XXH_PRIME64_2;
+        af_u64 v2 = XXH_PRIME64_2;
+        af_u64 v3 = 0;
+        af_u64 v4 = (af_u64)0 - XXH_PRIME64_1;
+
+        do {
+            v1 = xxh64_round(v1, rd64le(p)); p += 8;
+            v2 = xxh64_round(v2, rd64le(p)); p += 8;
+            v3 = xxh64_round(v3, rd64le(p)); p += 8;
+            v4 = xxh64_round(v4, rd64le(p)); p += 8;
+        } while (p <= limit);
+
+        h = rotl64(v1, 1) + rotl64(v2, 7) + rotl64(v3, 12) + rotl64(v4, 18);
+        h = xxh64_merge(h, v1);
+        h = xxh64_merge(h, v2);
+        h = xxh64_merge(h, v3);
+        h = xxh64_merge(h, v4);
+    } else {
+        h = XXH_PRIME64_5;
+    }
+
+    h += (af_u64)len;
+
+    while ((af_size)(end - p) >= 8) {
+        h ^= xxh64_round(0, rd64le(p));
+        h = rotl64(h, 27) * XXH_PRIME64_1 + XXH_PRIME64_4;
+        p += 8;
+    }
+
+    if ((af_size)(end - p) >= 4) {
+        h ^= rd32le(p) * XXH_PRIME64_1;
+        h = rotl64(h, 23) * XXH_PRIME64_2 + XXH_PRIME64_3;
+        p += 4;
+    }
+
+    while (p < end) {
+        h ^= (af_u64)(*p) * XXH_PRIME64_5;
+        h = rotl64(h, 11) * XXH_PRIME64_1;
+        p++;
+    }
+
+    h ^= h >> 33;
+    h *= XXH_PRIME64_2;
+    h ^= h >> 29;
+    h *= XXH_PRIME64_3;
+    h ^= h >> 32;
+    return h;
 }
 
 // =============================================================================
@@ -1536,13 +1863,26 @@ af_status_t afpkg_zstd(const af_u8 *data, af_size len,
         }
     }
 
-    // The content checksum (an XXH64 low word) follows the last block. It is NOT
-    // verified: that needs an XXH64 implementation, and this is stated rather
-    // than implied. The frame's declared content size and the caller's own
-    // comparisons are what stand in for it today.
-    if (has_checksum && at + 4 > len) {
-        *why = "the frame claims a checksum but has no room for one";
-        return AF_ERR_FS_CORRUPT;
+    // The content checksum follows the last block, when the header said it would.
+    if (has_checksum) {
+        if (at + 4 > len) {
+            *why = "the frame claims a checksum but has no room for one";
+            return AF_ERR_FS_CORRUPT;
+        }
+
+        // The stored value is the LOW 32 bits of XXH64, little-endian. A full
+        // 64-bit compare would be wrong: the high half is not in the file.
+        const af_u32 stored = (af_u32)data[at] |
+                              ((af_u32)data[at + 1] << 8) |
+                              ((af_u32)data[at + 2] << 16) |
+                              ((af_u32)data[at + 3] << 24);
+        const af_u32 computed = (af_u32)xxh64(out_base, out.used);
+
+        if (stored != computed) {
+            *why = "the frame's content checksum does not match the decompressed "
+                   "bytes — the frame is corrupt";
+            return AF_ERR_FS_CORRUPT;
+        }
     }
 
     if (fcs_size > 0 && content_size != out.used) {

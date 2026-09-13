@@ -1,0 +1,55 @@
+AfriyieOS v0.10 — Zstandard evidence
+generated: 2026-09-13T17:16:37Z
+host:      Linux 6.18.33.2-microsoft-standard-WSL2 x86_64
+
+===============================================================================
+1. The vectors
+===============================================================================
+
+Every frame is produced by the REFERENCE implementation (Python's
+compression.zstd, which is libzstd) and compared byte for byte against the
+payload it was built from. A decoder that emitted the right NUMBER of bytes
+would pass nothing here.
+
+payloads: 6
+frames:   48  (42 at seven levels, 6 with a content checksum)
+  constant     40000 bytes  7 level frames
+  distances     5900 bytes  7 level frames
+  empty            0 bytes  7 level frames
+  one              1 bytes  7 level frames
+  random       20000 bytes  7 level frames
+  text           560 bytes  7 level frames
+
+===============================================================================
+2. The decoder, against those vectors
+===============================================================================
+
+(no output from afpkg_zstd below means every frame decoded exactly)
+
+
+zstd vectors: 42 pass, 0 fail
+
+===============================================================================
+3. In the gate
+===============================================================================
+
+
+=== a gzipped tar that is not a package ===
+
+=== pacman packages ===
+
+=== a zstd tar that is not a package ===
+
+=== a corrupted zstd frame ===
+
+=== zstd vectors ===
+
+=== zstd frames with a content checksum ===
+
+===============================================================
+  149 checks passed
+===============================================================
+
+===============================================================
+  native tests: 1 suite(s) passed
+===============================================================

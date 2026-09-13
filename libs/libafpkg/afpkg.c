@@ -1167,6 +1167,84 @@ static af_status_t read_deb(const af_u8 *data, af_size len,
     return AF_OK;
 }
 
+// =============================================================================
+// A pacman package — Arch Linux, and everything derived from it
+//
+// `.pkg.tar.zst` is a zstd-compressed tar with a `.PKGINFO` file at its root.
+// That is the entire format, and it is why this reader is forty lines: the
+// container is zstd, which libafpkg now decodes, and the archive is tar, which it
+// already did.
+//
+// WHAT MAKES IT WORTH HAVING ANYWAY: this is the first format AfriyieOS reads
+// that it could not read before this milestone, and it was blocked only by the
+// decompressor. Every remaining format in the compatibility table is blocked by
+// something structural — a personality, a kernel interface, a GPU. This one was
+// blocked by arithmetic, and the arithmetic is now right.
+// =============================================================================
+static af_status_t read_pacman(const af_u8 *data, af_size len,
+                               const afpkg_scratch_t *scratch, af_pkg_t *out)
+{
+    if (scratch == NULL) {
+        out->error = "a zstd-compressed package needs a scratch buffer";
+        return AF_ERR_INVAL;
+    }
+
+    const char *why = "";
+    af_size inflated = 0;
+
+    const af_status_t rc = afpkg_zstd(data, len, scratch->base, scratch->size,
+                                      &inflated, &why);
+    if (af_status_err(rc)) {
+        out->error = why;
+        return rc;
+    }
+
+    // --- .PKGINFO, at the root, is what makes it a package --------------------
+    af_size cursor = 0;
+    af_pkg_entry_t entry;
+    const af_u8 *contents = NULL;
+    af_size contents_len = 0;
+    bool found = false;
+
+    while (true) {
+        const af_status_t trc = afpkg_tar_next(scratch->base, inflated, &cursor,
+                                               &entry, &contents, &contents_len,
+                                               &why);
+        if (trc == AF_ERR_AGAIN) {
+            continue;
+        }
+        if (af_status_err(trc)) {
+            break;
+        }
+        if (afpkg_strcmp(entry.path, ".PKGINFO") == 0) {
+            found = true;
+            break;
+        }
+    }
+
+    if (!found) {
+        // A zstd tar with no .PKGINFO is a zstd tar, not a package. Saying so is
+        // more useful than saying "corrupt", because the caller's next question
+        // is whether the file is damaged or simply something else.
+        out->error = "the zstd archive contains no .PKGINFO — this is a "
+                     "zstd-compressed tar, not a pacman package";
+        return AF_ERR_NOENT;
+    }
+
+    afpkg_parse_pkginfo((const char *)contents, contents_len, &out->info);
+
+    if (out->info.name[0] == '\0') {
+        out->error = "the .PKGINFO has no pkgname";
+        return AF_ERR_FS_CORRUPT;
+    }
+
+    out->data_tar     = scratch->base;
+    out->data_tar_len = inflated;
+    out->format       = AF_BINFMT_PACMAN;
+    out->error        = "read as a pacman package";
+    return AF_OK;
+}
+
 af_status_t afpkg_open(const af_u8 *data, af_size len,
                        const afpkg_scratch_t *scratch, af_pkg_t *out)
 {
@@ -1197,6 +1275,14 @@ af_status_t afpkg_open(const af_u8 *data, af_size len,
 
     if (len >= 2 && data[0] == 0x1F && data[1] == 0x8B) {
         rc = read_apk(data, len, scratch, out);
+        out->valid = !af_status_err(rc);
+        return rc;
+    }
+
+    // 0xFD2FB528, little-endian, which is what a .zst file starts with.
+    if (len >= 4 && data[0] == 0x28 && data[1] == 0xB5 &&
+        data[2] == 0x2F && data[3] == 0xFD) {
+        rc = read_pacman(data, len, scratch, out);
         out->valid = !af_status_err(rc);
         return rc;
     }
@@ -1254,7 +1340,9 @@ bool afpkg_iter_next(const af_pkg_t *pkg, afpkg_iter_t *it, af_pkg_entry_t *out)
             return false;
         }
 
-        if (pkg->format == AF_BINFMT_APK_PKG && apk_metadata_entry(out->path)) {
+        if ((pkg->format == AF_BINFMT_APK_PKG ||
+             pkg->format == AF_BINFMT_PACMAN) &&
+            apk_metadata_entry(out->path)) {
             continue;
         }
 

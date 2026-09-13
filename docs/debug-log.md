@@ -86,6 +86,213 @@ it is in no test, so a green run still means what it says.
 
 ---
 
+## 2026 — Entries from finishing the Zstandard decoder
+
+Seven more defects, listed in the order they were found, then the two that
+generalise. The score went 21/42 → 28 → 29 → 36 → 37 → 42/48, and every step was
+one bug.
+
+### A distribution table that summed to exactly the right total and was wrong
+
+**Milestone:** v0.10
+**Symptom:** `zstd_constant` — 40 000 bytes of `'a'`, the simplest input there is
+— decoded a one-sequence block into a match length of 41 instead of 39 998, and
+ran out of bitstream doing it.
+**Cause:** the predefined match-length distribution, which the RFC gives as 53
+values, had its low-probability tail in the wrong place:
+
+```
+    RFC 8878 §3.1.1.3.2.2.2      ... 1, 1, 1, 1, 1, 1, -1, -1,   (from index 40)
+                                      -1, -1, -1, -1, -1          (to index 52)
+    this file, before the fix    ... 1, 1, 1, 1, 1, 1,  1,  1,
+                                     -1, -1, -1, -1, -1
+```
+
+Seven symbols are low-probability, not five, and they start at 46, not 48. The
+array still had 53 entries and still summed to exactly 64, so every check the
+table builder has — alphabet size, total probability, over-subscription — passed.
+States 57 and 56 then decoded to match-length codes 45 and 46 where they should
+have decoded 52 and 51.
+
+**Found by:** tracing the three initial FSE states and decoding the block by hand
+against RFC Appendix A.1, whose literal-length table is published in full. The
+literal-length table was right at state 24 and the match-length table was wrong at
+state 58, and those two facts together said the *table* was wrong rather than the
+state or the bit reader.
+**Lesson:** a table that is internally consistent and externally wrong is
+invisible to every check the program can make about itself. This is the third time
+in this file that the only thing able to catch a bug was an answer from outside —
+a vector from the reference encoder, or a table transcribed from the spec by
+someone else.
+**The generalisation, written down because it will happen again:** a
+self-consistency check on transcribed data proves nothing. Counts that sum, a
+length that matches, a checksum of your own making — none of them can see a
+transcription error. Only a comparison against a different implementation can.
+
+### The symbol and the state update were one operation, and they are not
+
+**Milestone:** v0.10
+**Symptom:** every compressed block ended with "sequences bitstream ended in the
+middle of a sequence", and the sequences that *were* decoded looked plausible.
+**Cause:** `fse_decode()` returned the symbol and immediately consumed the
+`nb_bits` that renormalise the state — which is correct for the Huffman weight
+tables and wrong for sequences, because the format interleaves three symbol types
+in **four different orders**:
+
+```
+    initial states    LL, OF, ML
+    extra bits        OF, ML, LL        <- read with the states AS THEY ARE
+    state updates     LL, ML, OF        <- and NOT after the last sequence
+```
+
+Folding the update into the lookup read the literal-length renormalisation bits
+*before* the offset's extra bits, so every sequence after the first was decoded
+from the wrong bit position.
+
+**Found by:** reading RFC 8878 §3.1.1.3.2.1.3, which states all three orders
+explicitly and in prose, after the trace showed a plausible-looking sequence
+decoding to an impossible offset.
+**Lesson, and it is the fourth distinct ordering in this one format:** "decode a
+symbol" and "advance the state" are separate steps whenever a format
+interleaves more than one symbol type through one bitstream. A helper that does
+both is a helper that has decided the order for you, and it will be wrong.
+
+### Offsets 1, 2 and 3 are not offsets, and the rule shifts when there are no literals
+
+**Milestone:** v0.10
+**Symptom:** `zstd_distances` decoded the right number of bytes with the wrong
+ones — the seed block `ABCDEFGH` where eight identical marker bytes belonged.
+**Cause:** RFC 8878 §3.1.1.5 contains a sentence that changes the meaning of the
+whole repeat-offset scheme:
+
+> There is one exception: when the current sequence's literals_length is 0,
+> repeated offsets are shifted by 1, so an offset_value of 1 means
+> Repeated_Offset2, an offset_value of 2 means Repeated_Offset3, and an
+> offset_value of 3 means Repeated_Offset1 - 1_byte.
+
+The old code applied the shift only to `offset_value == 3` and applied it as a
+special case, leaving 1 and 2 meaning what they usually mean. Worse, it *skipped
+the history update entirely* in that branch. The specification is explicit that
+the history is updated after **every** sequence, and that the resolved value — for
+`offset_value 3` with no literals, a value that has never been seen before — is
+inserted at the front.
+
+**Found by:** reading the section in full after the byte-exact comparison showed a
+copy from offset 8 where offset 1 belonged.
+**Lesson:** the exception-to-a-rule wording ("there is one exception") is where
+the rule stops applying at all, and a decoder that implements it as a special
+case inside the rule keeps the rule's other consequences — here, a stale history
+— without noticing.
+
+### A bit field is not always as wide as its field
+
+**Milestone:** v0.10
+**Symptom:** the Huffman weight table for `zstd_text` decoded to 148 weights where
+the payload's largest character needs 123, and the trailing weights were all zero.
+**Cause:** FSE count tables do not spend the full `nb_bits` on every symbol. The
+low `nb_bits - 1` bits are read first, and the top bit is fetched **only** when
+those already guarantee the value is not below the threshold. Reading `nb_bits`
+every time returns the same *value* — the low bits are the same either way — and
+advances the bit position one too many.
+
+**Found by:** comparing the decoded weight count against the number of distinct
+characters in the payload, which is knowable without decoding anything.
+**Lesson:** "read the field, then mask it" is right when the field is fixed-width
+and wrong when the width is conditional. The two differ only in the reader's
+position, so the failure is a shift, not a bad value — which is why it survived
+the earlier rounds.
+
+### The FSE decoder emits two symbols after the bits run out
+
+**Milestone:** v0.10
+**Symptom:** after fixing the bit width above, the weight count was 120 instead of
+122 — exactly two short, and the two missing weights were zero, so the table still
+looked like a table.
+**Cause:** the reference implementation's FSE decoder does not stop at the end of
+the bitstream. Its reader refills a register a byte at a time and reports
+"overflow" when a refill goes past the start; at that moment both live states
+still hold valid symbols and **both are emitted**. An exact bit-at-a-time reader
+that stops the instant the last bit is consumed loses them.
+**Found by:** the count was short by exactly two, which is the interleaving
+period — a very specific number that ruled out "approximately right".
+**Lesson:** when emulating a reader that works on whole bytes with a reader that
+works on single bits, the *termination condition* is part of the algorithm. It is
+easy to get every decoded value right and the number of values wrong.
+
+### `Size_Format` is a two-bit field whose values 00 and 10 mean the same thing
+
+**Milestone:** v0.10
+**Symptom:** `zstd_distances.1` read a 39-byte raw literal section as 78 bytes,
+then read an offset table where a sequence count belonged and reported "RLE
+sequence table names a symbol outside its alphabet".
+**Cause:** for Raw and RLE literals, `Size_Format` is (RFC 8878 §3.1.1.3.1.1):
+
+```
+    00 or 10   1-byte header,  Regenerated_Size = header[0] >> 3       (5 bits)
+    01         2-byte header,  = (header[0] >> 4) + (header[1] << 4)   (12 bits)
+    11         3-byte header,  = (header[0] >> 4) + (header[1] << 4)
+                                        + (header[2] << 12)            (20 bits)
+```
+
+The code read the field as **one** bit, and then took the multi-byte size out of
+bits 3+ instead of bits 4+. `0x74 0x02` should be 39; it read 78. It also had no
+three-byte case at all, so a literal section above 4095 bytes would have been
+mis-read as something else entirely.
+
+**Found by:** hex-dumping the block and computing both answers by hand. The
+decoded value was exactly twice the right one, which pointed straight at the
+shift.
+**Lesson:** "the same field has a different width depending on the type" is a
+real thing in this format and it is written down. The compressed-literal branch
+of the same function had it right; the raw/RLE branch did not, and both were in
+the same thirty lines.
+
+### Every FSE table description ends on a byte boundary
+
+**Milestone:** v0.10
+**Symptom:** the last four vectors. `zstd_distances.6` decoded 55 plausible
+sequences and left 373 of 970 bits unconsumed; levels 9 through 19 decoded offsets
+that reached before the start of the output.
+**Cause:** the three table descriptions are packed consecutively in one
+LSB-first forward bitstream, so feeding a single bit reader into all three is the
+natural implementation. The reference implementation does not do that:
+`FSE_readNCount` returns how many **bytes** it consumed and the caller advances a
+byte pointer. When the first description ends mid-byte, the second one is read a
+bit-shift out. Its normalized counts still summed to exactly 32 and its accuracy
+log was still legal, so it built a valid table that decoded to wrong symbols.
+**Found by:** comparing the two vectors that have an offset table and no literal
+table (which pass) against the ones that have both (which failed). Two tables is
+the smallest case where the alignment can matter, and that split named it
+immediately.
+**Lesson:** "returns the number of bytes consumed" is a contract, and a decoder
+that keeps its own bit position must honour it even when the next field looks like
+it starts one bit later. This is the second byte-alignment bug in this file after
+the virtqueue's used ring.
+
+### The checksum was read and thrown away
+
+**Milestone:** v0.10
+**Symptom:** none — this was found by writing a negative test, not by a failure.
+A pacman fixture with one bit flipped in the middle of its zstd frame still opened
+as a valid package.
+**Cause:** the frame header's `Content_Checksum_Flag` was parsed and the four
+trailing bytes were bounds-checked, and then ignored, with a comment saying so.
+A flipped bit inside literal data produces a perfectly valid frame, a perfectly
+valid tar, and a package that installs with one wrong byte in it. The gzip reader
+had been protected against exactly this by its CRC32 since v0.9; the zstd reader
+was not.
+**Fix:** XXH64 implemented (about sixty lines) and the frame's content checksum
+now verified whenever the header says it is present. Six new vectors — the same
+payloads in frames the reference implementation marked with a checksum — are what
+verify the hash, and a frame that decompresses byte for byte while failing its
+checksum could not pass them.
+**Lesson:** "documented as not done" is better than silent, and it is not the
+same as done. The comment was accurate and the behaviour was still a hole; the
+thing that surfaced it was writing a test that asserted the *desirable* property
+rather than the current one.
+
+---
+
 ## 2026 — Entries from the package-metadata work
 
 ### Excluding the install scripts was necessary and not sufficient

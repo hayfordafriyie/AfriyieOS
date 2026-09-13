@@ -790,6 +790,302 @@ static void test_apk(const char *dir)
 }
 
 // =============================================================================
+// A pacman package
+//
+// The first format here that was blocked by arithmetic rather than structure. It
+// is a tar, which libafpkg could already read, inside zstd, which it could not.
+// These tests are therefore the decoder's end-to-end test as much as the
+// reader's: if the decompressor is wrong by one bit anywhere, no field below is
+// right, and there is no way to reach the assertions by another route.
+// =============================================================================
+static void test_pacman(const char *dir)
+{
+    printf("\n=== pacman packages ===\n");
+
+    if (load(dir, "test-1.2.3-1-x86_64.pkg.tar.zst") != 0) {
+        s_failures++;
+        return;
+    }
+
+    af_pkg_t pkg;
+    const af_status_t rc = afpkg_open(s_file, (af_size)s_file_len,
+                                      &s_apk_scratch, &pkg);
+    check(rc == AF_OK, "a .pkg.tar.zst opens");
+    if (rc != AF_OK) {
+        printf("        %s\n", afpkg_error(&pkg));
+        unload();
+        return;
+    }
+
+    check(pkg.format == AF_BINFMT_PACMAN, "and is identified as a pacman package");
+    check_str(pkg.info.name, "afriyie-test", "pkgname");
+    check_str(pkg.info.version, "1.2.3-1", "pkgver");
+    check_str(pkg.info.architecture, "x86_64", "arch");
+    check_str(pkg.info.description, "a synthetic pacman package", "pkgdesc");
+    check_u64(pkg.info.installed_size, 4096, "size");
+    check(pkg.info.depends_count == 2, "both depend lines are kept separate");
+    check_str(pkg.info.depends[0], "glibc", "the first dependency");
+    check_str(pkg.info.depends[1], "libfoo.so=1-64",
+              "and the second, which contains '=' and must not be split again");
+
+    // --- the file list --------------------------------------------------------
+    //
+    // .PKGINFO and .MTREE describe the package; the rest is payload. Offering
+    // either as a file to install would write it into the root directory of a
+    // real system, which is exactly the bug the Alpine reader had.
+    int files = 0;
+    int saw_binary = 0;
+    int saw_metadata = 0;
+
+    afpkg_iter_t it;
+    afpkg_iter_begin(&it);
+
+    af_pkg_entry_t entry;
+    while (afpkg_iter_next(&pkg, &it, &entry)) {
+        if (entry.is_directory) {
+            continue;
+        }
+        files++;
+        if (strcmp(entry.path, "usr/bin/afriyie-test") == 0) {
+            saw_binary = 1;
+            check_u64(entry.size, strlen("#!/bin/sh\necho pacman\n"),
+                      "the binary's size is right");
+            check((entry.mode & 0111u) != 0, "and it is marked executable");
+        }
+        if (strncmp(entry.path, ".PKGINFO", 8) == 0 ||
+            strncmp(entry.path, ".MTREE", 6) == 0) {
+            saw_metadata = 1;
+        }
+    }
+
+    check(files == 3, "the package has three payload files");
+    check(saw_binary == 1, "including the binary");
+    check(saw_metadata == 0, "and neither metadata file is offered as payload");
+
+    unload();
+
+    // --- a zstd tar that is not a package -------------------------------------
+    printf("\n=== a zstd tar that is not a package ===\n");
+
+    if (load(dir, "notapkg-1.0-1-x86_64.pkg.tar.zst") != 0) {
+        s_failures++;
+        return;
+    }
+
+    af_pkg_t notpkg;
+    const af_status_t rc_not = afpkg_open(s_file, (af_size)s_file_len,
+                                          &s_apk_scratch, &notpkg);
+    check(rc_not != AF_OK, "a zstd tar with no .PKGINFO is refused");
+    check(strstr(afpkg_error(&notpkg), "not a pacman package") != NULL,
+          "and the reason distinguishes it from a damaged package");
+
+    unload();
+
+    // --- a corrupted zstd frame -----------------------------------------------
+    //
+    // The fixture's frame carries a content checksum, so this is detected because
+    // the decompressed bytes no longer hash to what the frame says — not because
+    // the corruption happened to land somewhere structurally invalid.
+    printf("\n=== a corrupted zstd frame ===\n");
+
+    if (load(dir, "badzstd-1.2.3-1-x86_64.pkg.tar.zst") != 0) {
+        s_failures++;
+        return;
+    }
+
+    af_pkg_t bad;
+    const af_status_t rc_bad = afpkg_open(s_file, (af_size)s_file_len,
+                                          &s_apk_scratch, &bad);
+    check(rc_bad != AF_OK, "a frame with a flipped bit does not open as a package");
+    check(strstr(afpkg_error(&bad), "checksum") != NULL,
+          "and the reason names the checksum rather than guessing");
+
+    unload();
+}
+
+// =============================================================================
+// Zstandard
+//
+// 42 frames, produced by the reference implementation, each compared byte for
+// byte against the payload it was built from.
+//
+// THE COMPARISON IS THE WHOLE TEST. A decompressor that emits the right NUMBER
+// of bytes has proved nothing; every bug found in this decoder produced output of
+// the correct length. They were found by this comparison and by nothing else.
+//
+// The vectors cover the six payload shapes at seven compression levels because
+// zstd changes strategy as the level rises: low levels favour raw and RLE
+// blocks, high levels switch to compressed literals, FSE-coded sequence tables
+// and a different set of repeat offsets. All three block types and all four
+// symbol-compression modes appear across the set.
+// =============================================================================
+static unsigned char *read_all(const char *path, long *out_len)
+{
+    FILE *handle = fopen(path, "rb");
+    if (handle == NULL) {
+        return NULL;
+    }
+
+    fseek(handle, 0, SEEK_END);
+    const long len = ftell(handle);
+    fseek(handle, 0, SEEK_SET);
+
+    unsigned char *buf = (unsigned char *)malloc((size_t)len + 1);
+    if (buf == NULL) {
+        fclose(handle);
+        return NULL;
+    }
+
+    if (len > 0 && fread(buf, 1, (size_t)len, handle) != (size_t)len) {
+        free(buf);
+        fclose(handle);
+        return NULL;
+    }
+
+    fclose(handle);
+    *out_len = len;
+    return buf;
+}
+
+static void test_zstd(const char *dir)
+{
+    static const char *names[] = { "empty", "one", "random",
+                                   "constant", "text", "distances" };
+    static const int levels[] = { 1, 3, 6, 9, 12, 15, 19 };
+
+    printf("\n=== zstd vectors ===\n");
+
+    static unsigned char out[128 * 1024];
+    char path[1024];
+
+    for (unsigned n = 0; n < sizeof(names) / sizeof(names[0]); n++) {
+        long raw_len = 0;
+        snprintf(path, sizeof(path), "%s/zstd_%s.raw", dir, names[n]);
+        unsigned char *raw = read_all(path, &raw_len);
+        if (raw == NULL) {
+            s_failures++;
+            printf("  FAIL  cannot open %s — run tools/pkgsynth.py first\n", path);
+            continue;
+        }
+
+        for (unsigned l = 0; l < sizeof(levels) / sizeof(levels[0]); l++) {
+            snprintf(path, sizeof(path), "%s/zstd_%s.%d.zst", dir, names[n],
+                     levels[l]);
+
+            long zlen = 0;
+            unsigned char *z = read_all(path, &zlen);
+            if (z == NULL) {
+                continue;   // pkgsynth skips levels the local zstd rejects
+            }
+
+            af_size got_len = 0;
+            const char *why = "";
+            const af_status_t rc = afpkg_zstd(z, (af_size)zlen, out,
+                                              (af_size)sizeof(out), &got_len, &why);
+
+            char what[160];
+            snprintf(what, sizeof(what), "zstd_%s.%d is byte-exact", names[n],
+                     levels[l]);
+
+            const int ok = (rc == AF_OK) && ((long)got_len == raw_len) &&
+                           (raw_len == 0 ||
+                            memcmp(out, raw, (size_t)raw_len) == 0);
+            check(ok, what);
+            if (!ok) {
+                printf("        %s: status=%d got=%ld want=%ld why=%s\n", what,
+                       (int)rc, (long)got_len, raw_len, why);
+            }
+
+            free(z);
+        }
+
+        free(raw);
+    }
+
+    // --- the same payloads, in frames that carry a checksum -------------------
+    //
+    // The checksum is a claim about the decompressed bytes made by the encoder.
+    // If the XXH64 here were wrong in any way, a frame that decompresses
+    // perfectly would be rejected — so these six vectors are what the checksum
+    // implementation is verified against, and there is nothing else that could
+    // verify it against the reference implementation.
+    printf("\n=== zstd frames with a content checksum ===\n");
+
+    for (unsigned n = 0; n < sizeof(names) / sizeof(names[0]); n++) {
+        long raw_len = 0;
+        long zlen = 0;
+
+        snprintf(path, sizeof(path), "%s/zstd_%s.raw", dir, names[n]);
+        unsigned char *raw = read_all(path, &raw_len);
+
+        snprintf(path, sizeof(path), "%s/zstd_%s.chk.zst", dir, names[n]);
+        unsigned char *z = read_all(path, &zlen);
+
+        if (raw == NULL || z == NULL) {
+            free(raw);
+            free(z);
+            continue;   // the binding could not set the flag when this ran
+        }
+
+        af_size got_len = 0;
+        const char *why = "";
+        const af_status_t rc = afpkg_zstd(z, (af_size)zlen, out,
+                                          (af_size)sizeof(out), &got_len, &why);
+
+        char what[160];
+        snprintf(what, sizeof(what), "zstd_%s with a checksum verifies and is "
+                                     "byte-exact", names[n]);
+        const int ok = (rc == AF_OK) && ((long)got_len == raw_len) &&
+                       (raw_len == 0 || memcmp(out, raw, (size_t)raw_len) == 0);
+        check(ok, what);
+        if (!ok) {
+            printf("        status=%d got=%ld want=%ld why=%s\n", (int)rc,
+                   (long)got_len, raw_len, why);
+        }
+
+        free(z);
+        free(raw);
+    }
+
+    // --- negatives ------------------------------------------------------------
+    //
+    // A decoder that accepts everything is not a decoder. These two are the ones
+    // the frame layer is responsible for; the block layer's rejections are
+    // exercised by the vectors above, which reach every one of them.
+    {
+        long zlen = 0;
+        snprintf(path, sizeof(path), "%s/zstd_text.6.zst", dir);
+        unsigned char *z = read_all(path, &zlen);
+
+        if (z == NULL) {
+            s_failures++;
+            printf("  FAIL  cannot open %s\n", path);
+        } else {
+            af_size got_len = 0;
+            const char *why = "";
+
+            const unsigned char saved = z[zlen - 1];
+            const unsigned char saved_magic = z[3];
+
+            z[zlen - 1] = 0;   // the sentinel every backward bitstream needs
+            af_status_t rc = afpkg_zstd(z, (af_size)zlen, out,
+                                        (af_size)sizeof(out), &got_len, &why);
+            check(rc != AF_OK, "a frame whose last bitstream byte is zero is refused");
+            z[zlen - 1] = saved;
+
+            z[3] = (unsigned char)(saved_magic ^ 0xFFu);
+            rc = afpkg_zstd(z, (af_size)zlen, out, (af_size)sizeof(out),
+                            &got_len, &why);
+            check(rc == AF_ERR_INVAL, "a frame with the wrong magic is refused");
+            check_str(why, "not a Zstandard frame: the magic number is wrong",
+                      "and the reason names the magic number");
+
+            free(z);
+        }
+    }
+}
+
+// =============================================================================
 int main(int argc, char **argv)
 {
     const char *dir = (argc > 1) ? argv[1] : "build/fixtures";
@@ -805,6 +1101,8 @@ int main(int argc, char **argv)
     test_layers(dir);
     test_deflate(dir);
     test_apk(dir);
+    test_pacman(dir);
+    test_zstd(dir);
 
     printf("\n===============================================================\n");
     if (s_failures == 0) {

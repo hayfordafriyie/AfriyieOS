@@ -27,15 +27,14 @@
 //
 // WHAT IS NOT DONE, named rather than implied:
 //
-//   * The inflater handles DEFLATE STORED blocks only. That is a legal gzip
-//     stream and it is what the generated fixtures contain, but real-world
-//     packages use Huffman coding and will not decompress until the fixed and
-//     dynamic Huffman paths land. The failure is an explicit error, never
-//     garbage output.
-//   * xz and zstd members are refused by name rather than misread.
-//   * rpm, pacman and apk readers are not written yet. deb is first because it
-//     is the most widely used and because its container exercises the most
-//     machinery.
+//   * xz members are refused by name rather than misread. xz is the one common
+//     package container still missing; LZMA2 is a different algorithm from both
+//     DEFLATE and Zstandard and is its own piece of work.
+//   * rpm is not written yet. Its structure is unlike the other four — a binary
+//     header with its own tag directory, not an archive — and it is the last
+//     reader the compatibility table needs.
+//   * The .deb reader handles control.tar and control.tar.gz. A control.tar.zst
+//     member is read but not yet decompressed there; data.tar.zst is.
 
 #ifndef AFRIYIE_AFPKG_H
 #define AFRIYIE_AFPKG_H
@@ -164,7 +163,7 @@ typedef struct {
 typedef struct af_pkg {
     // --- results -------------------------------------------------------------
     af_pkg_info_t info;
-    af_binfmt_t   format;          // AF_BINFMT_DEB for now
+    af_binfmt_t   format;          // AF_BINFMT_DEB, _APK_PKG or _PACMAN
     bool          valid;
 
     // --- why it failed, if it did --------------------------------------------
@@ -255,8 +254,13 @@ af_status_t afpkg_gunzip_member(const af_u8 *data, af_size len,
 
 // Zstandard (RFC 8878), for modern .deb, pacman's .pkg.tar.zst and Snap.
 //
-// NOT YET VERIFIED against the vectors — see tools/pkgsynth.py,
-// which writes zstd_*.raw and zstd_*.N.zst pairs.
+// VERIFIED against 48 frames the reference implementation produced — 42 without a
+// content checksum and 6 with one — every one compared byte for byte against the
+// payload it came from. See tools/pkgsynth.py for how they are generated and
+// tests/native/test_afpkg.c for what is asserted.
+//
+// Dictionaries and skippable frames are refused with AF_ERR_NOTSUP. Neither
+// appears in a distribution package.
 af_status_t afpkg_zstd(const af_u8 *data, af_size len,
                        af_u8 *out_base, af_size out_size,
                        af_size *out_len, const char **why);
