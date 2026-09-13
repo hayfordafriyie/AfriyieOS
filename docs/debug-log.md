@@ -23,6 +23,142 @@ Lesson:     the generalisable part
 
 ## 2025 — Entries from v0.2 development
 
+### `context_switch` saved `rsp` eight bytes past the return address
+
+**Milestone:** v0.2
+**Symptom:** an invalid-opcode fault with `RIP` pointing **inside `.bss`** — a
+control transfer to a data address — a few hundred context switches into the
+scheduler acceptance test. Nothing looked wrong before it: both threads had been
+created, the timer was ticking, the idle thread was running.
+**Cause:** the saved stack pointer was off by one slot. `context_switch` ended
+with `ret`, which pops the *incoming* thread's return address, so the saved `rsp`
+for the outgoing thread was recorded as `rsp + 8` — skipping its own return
+address. On resume, `mov rsp, [ctx+CTX_RSP]` followed by `ret` therefore popped
+whatever sat in the slot *above* the return address, and jumped there.
+
+The comment justifying it read: *"The return address is on our stack, and `ret`
+below will consume it from the incoming stack. So we must pop it ourselves and
+record rsp AFTER the pop, otherwise the resumed thread would return into a stale
+frame."* Every clause is individually true and the conclusion is wrong. The
+outgoing thread's return address must **stay** on its stack, because that is
+exactly what its own `ret` will pop when it is next resumed.
+**Fix:** `mov [rdi + CTX_RSP], rsp` — no arithmetic. The convention is the one
+`call`/`ret` already uses: `rsp` points *at* the return address. Both cases then
+work unchanged, including a brand new thread, whose stack has
+`thread_trampoline` sitting in exactly that slot.
+**Found by:** `tools/resolve_addr.sh` turning the faulting `RIP` into
+`kernel_stack_bottom + 0x3858` — a *data* symbol — which meant a corrupted
+control transfer rather than a bad instruction. That ruled out the decoder, the
+handler and the code being executed, and left the saved context as the only
+remaining suspect.
+**Lesson:** this is the bug the blueprint warns about in as many words — *"you
+will spend 99% of your time debugging context switch register save errors"* —
+and it did not present as a register being wrong. It presented as a jump to
+nonsense several hundred switches later, in code with no connection to the
+scheduler. Two things made it findable: the panic dump prints every register, and
+resolving an address to a symbol costs seconds. A wrong-looking-but-plausible
+comment is worth less than a test that runs long enough to expose the failure.
+
+---
+
+### The v0.2 acceptance test did not test what it claimed
+
+**Milestone:** v0.2
+**Symptom:** after the context-switch fix, both threads ran to completion but the
+test failed with *"only 2 A/B transitions in 400 entries — the threads ran
+sequentially"*.
+**Cause:** the test was wrong, not the scheduler. One worker yielded once per
+iteration; the other was meant to be preempted. But 200 iterations of a trivial
+loop complete in **microseconds**, far inside one 10 ms time slice, so the second
+worker finished its entire workload before the timer ever had a chance to
+interrupt it. The scheduler was behaving correctly; the test had never created the
+conditions it claimed to be testing.
+**Fix:** two separate tests, each of which actually exercises its mechanism.
+Both workers now yield, producing a near-strict alternation that is directly
+observable (the run shows 201 switches each). Preemption is tested with a thread
+that never yields and never sleeps: if the boot thread runs again while that
+thread is going, the CPU *must* have been taken away by the timer. It counted
+**13.8 million iterations** while the boot thread slept, which is a proof rather
+than a correlation — no cooperative mechanism could produce that result.
+**Lesson:** a failing test is a claim about the system, and it can itself be the
+thing that is wrong. Before changing the code to satisfy a test, check that the
+test sets up the conditions it asserts about. The first diagnosis here —
+"the scheduler starved them" — pointed at entirely the wrong subsystem, and
+acting on it would have meant debugging working code.
+
+---
+
+### A created thread was never put on a run queue
+
+**Milestone:** v0.2
+**Symptom:** *"scheduler test: alpha reached 0 of 200 iterations — the scheduler
+starved it"*. Both threads existed; neither ever executed.
+**Cause:** `thread_create()` built the thread, allocated its stack, set up its
+context — and left it in state `CREATED` forever, because nothing put it on a run
+queue. `sched_admit()` did not exist.
+**Fix:** an explicit admission step, called by whoever creates the thread,
+documented with the failure mode spelled out. `thread_create()` does not admit
+itself because it holds the thread-table lock and the scheduler has its own lock
+ordering.
+**Found by:** the thread dump showing two threads stuck in `CREATED` while the
+scheduler reported an empty run queue. `thread_dump_all()` earns its keep here.
+**Lesson:** "created" and "runnable" are different states, and the gap between
+them is invisible unless something prints it. State machines need a dump.
+
+---
+
+### `sched_yield` held a spinlock across a context switch
+
+**Milestone:** v0.2
+**Symptom:** the machine stopped dead with no fault and no output, immediately
+after the idle thread started.
+**Cause:** `sched_yield()` took a spinlock, called `context_switch()`, and
+released the lock afterwards. Thread A takes the lock, switches to B; B calls
+`sched_yield()`, tries the same lock, and spins forever waiting for a thread that
+is not running. `af_spin_lock` also disables interrupts, so the machine stops
+taking ticks too.
+**Fix:** no lock across a switch. Interrupts are disabled only around the run-queue
+mutation and re-enabled *before* the switch, so the machine is taking ticks again
+by the time the new thread runs.
+**Lesson:** a lock held across a context switch is meaningless, because its holder
+is not on a CPU any more. The only correct protection for a critical section that
+ends in a switch is disabling interrupts for the part that touches shared state,
+and re-enabling them before the switch.
+
+---
+
+### A brand new thread inherited interrupts disabled
+
+**Milestone:** v0.2
+**Symptom:** would have been a system that froze the instant a second thread
+started — no ticks, no preemption, no output.
+**Cause:** a thread entered from inside the timer interrupt starts with `IF`
+cleared, because the interrupt gate clears it. A *resumed* thread is fine: it
+returns through its own `iretq`, which restores its flags. A thread that has never
+run has no earlier state to restore.
+**Fix:** `thread_trampoline` executes `sti` before calling the entry function.
+**Lesson:** the two ways a thread begins — resumed versus brand new — differ in
+exactly the places where the CPU restores state automatically for one and not the
+other. Flags, FPU state and segment registers all fall into this category.
+
+---
+
+### The boot context *was* the idle thread
+
+**Milestone:** v0.2
+**Symptom:** the acceptance test spun 2000 times without ever yielding, and
+reported that the scheduler had starved both worker threads.
+**Cause:** `kmain`'s context was adopted as the idle thread. `sched_sleep()` and
+`sched_block()` deliberately refuse to act on the idle thread — blocking it would
+deadlock the machine — so every sleep in the boot path silently became a no-op.
+**Fix:** the two are separate threads. `sched_init()` now takes both, and the idle
+thread is created like any other.
+**Lesson:** a safety check that silently does nothing is a trap. The guard was
+correct; returning quietly instead of reporting made it invisible. There is a
+case for an `AF_ASSERT` there, at least in debug builds.
+
+---
+
 ### The PMM freed the kernel's own `.bss`
 
 **Milestone:** v0.2

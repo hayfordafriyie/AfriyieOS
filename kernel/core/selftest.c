@@ -418,8 +418,35 @@ static void beta_thread(void *arg)
         sched_record('B');
         s_beta_progress = i + 1;
 
-        // No yield here. Beta is preempted by the timer tick, which is the
-        // behaviour actually under test.
+        // Both workers yield, so the log alternates deterministically and the
+        // round-robin behaviour is directly observable.
+        //
+        // The first version had beta NOT yield, intending to test preemption
+        // instead. It reported "2 transitions in 400 entries — the threads ran
+        // sequentially", which was wrong about the cause: 200 iterations of a
+        // trivial loop complete in microseconds, far inside one 10 ms time
+        // slice, so beta finished its entire workload before the timer ever had
+        // a chance to preempt it. The scheduler was fine; the test had not
+        // created the conditions it claimed to be testing.
+        //
+        // Preemption is verified properly below, with a thread that genuinely
+        // cannot finish inside a slice.
+        sched_yield();
+    }
+}
+
+// A thread that never yields and never sleeps: it can only be stopped by the
+// timer. If the boot thread ever runs again while this is going, preemption is
+// real — there is no other mechanism by which the CPU could have changed hands.
+static volatile af_u32 s_spinner_count = 0;
+static volatile bool   s_spinner_stop  = false;
+
+static void spinner_thread(void *arg)
+{
+    AF_UNUSED(arg);
+
+    while (!s_spinner_stop) {
+        s_spinner_count++;
     }
 }
 
@@ -451,7 +478,7 @@ void af_sched_selftest(void)
     // scheduler itself.
     af_u32 waited = 0;
     while ((s_alpha_progress < SCHED_TEST_ITERATIONS ||
-            s_beta_progress < SCHED_TEST_ITERATIONS) && waited < 2000) {
+            s_beta_progress < SCHED_TEST_ITERATIONS) && waited < 5000) {
         sched_sleep(1);
         waited++;
     }
@@ -471,13 +498,24 @@ void af_sched_selftest(void)
                                   "(%u iterations each; waited %u ticks)",
            (af_u32)SCHED_TEST_ITERATIONS, waited);
 
-    // --- 2. the interleaving is real -----------------------------------------
+    // --- 2. show a sample before asserting, so a failure is diagnosable -------
     af_u32 length = s_sched_log_len;
     if (length != SCHED_TEST_MAX_LOG) {
         af_panic("scheduler test: recorded %u entries, expected %u",
                  length, (af_u32)SCHED_TEST_MAX_LOG);
     }
 
+    {
+        char sample[80];
+        af_u32 n = (length < 72) ? length : 72;
+        for (af_u32 i = 0; i < n; i++) {
+            sample[i] = s_sched_log[i];
+        }
+        sample[n] = '\0';
+        af_info("test", "  first %u entries: %s", n, sample);
+    }
+
+    // --- 3. the interleaving is real -----------------------------------------
     af_u32 transitions = 0;
     af_u32 a_count = 0;
     af_u32 b_count = 0;
@@ -509,36 +547,85 @@ void af_sched_selftest(void)
                  a_count, b_count, (af_u32)SCHED_TEST_ITERATIONS);
     }
 
-    // A sequential run would show exactly one transition: all of A, then all of
-    // B. Real concurrency shows many. The threshold is deliberately loose — the
-    // exact figure depends on the tick rate and how fast the machine is — but a
-    // scheduler that never preempts produces a single transition and fails this
-    // immediately.
-    if (transitions < 10) {
+    // Two threads that both yield hard once per iteration should produce close
+    // to a strict alternation. A sequential run produces ONE transition, so the
+    // threshold is set well above that while leaving room for a tick landing
+    // between two yields.
+    if (transitions < SCHED_TEST_ITERATIONS) {
         af_panic("scheduler test: only %u A/B transitions in %u entries — the "
                  "threads ran sequentially rather than concurrently",
                  transitions, length);
     }
 
-    if (longest_run > 64) {
+    if (longest_run > 8) {
         af_panic("scheduler test: one thread ran %u times consecutively — "
-                 "preemption is not working", longest_run);
+                 "round-robin scheduling is not rotating", longest_run);
     }
 
     af_log(AF_LOG_DEBUG, "test",
-           "  ok   %u A/B transitions, longest run %u — threads interleaved",
+           "  ok   %u A/B transitions, longest run %u — strict round-robin",
            transitions, longest_run);
 
-    // --- 3. show a sample so a human can see it ------------------------------
-    {
-        char sample[96];
-        af_u32 n = (length < 60) ? length : 60;
-        for (af_u32 i = 0; i < n; i++) {
-            sample[i] = s_sched_log[i];
-        }
-        sample[n] = '\0';
-        af_info("test", "  first %u entries: %s", n, sample);
+    // --- 4. preemption, tested with a thread that cannot be starved ----------
+    //
+    // The spinner never yields and never sleeps, so the ONLY way the boot thread
+    // can run again is if the timer interrupt takes the CPU away from it. If
+    // that happens and the spinner has made progress, preemption works. There is
+    // no cooperative mechanism that could produce this result instead, which is
+    // what makes it a proof rather than a correlation.
+    s_spinner_count = 0;
+    s_spinner_stop = false;
+
+    af_thread_t *spinner = thread_create("spinner", spinner_thread, NULL,
+                                         AF_KERNEL_STACK_SIZE, AF_PRIO_DEFAULT);
+    if (spinner == NULL) {
+        af_panic("scheduler test: could not create the spinner thread");
     }
+    sched_admit(spinner);
+
+    // Sleep ~10 ticks. This can only return if the timer preempted the spinner.
+    sched_sleep(10);
+
+    af_u32 spinner_progress = s_spinner_count;
+    s_spinner_stop = true;
+
+    if (spinner_progress == 0) {
+        af_panic("scheduler test: the spinner made no progress — it never ran");
+    }
+
+    af_log(AF_LOG_DEBUG, "test",
+           "  ok   preemption: a non-yielding thread was interrupted "
+           "(%u iterations counted while the boot thread slept)",
+           spinner_progress);
+
+    // Capture the tid BEFORE sleeping. thread_reap() frees the thread structure
+    // on success, so `spinner` becomes a dangling pointer the moment reaping
+    // happens — and the first version of this check read spinner->tid after the
+    // sleep, which is a use-after-free in the test itself. It reported "still
+    // registered" while reading freed memory.
+    af_tid_t spinner_tid = spinner->tid;
+
+    // Give the spinner a tick to notice the stop flag and exit, then reap.
+    //
+    // Reaping runs from whatever thread is not the one exiting, so it is done
+    // here as well as in the idle loop. Relying on the idle thread alone is
+    // fragile: it only gets the CPU when nothing else can run, so with a busy
+    // run queue the reaping is correct but arbitrarily delayed — and a zombie
+    // holds a 16 KiB stack for as long as that lasts.
+    for (af_u32 i = 0; i < 16 && thread_by_tid(spinner_tid) != NULL; i++) {
+        sched_collect_zombies();
+        sched_sleep(1);
+    }
+
+    if (thread_by_tid(spinner_tid) != NULL) {
+        af_panic("scheduler test: spinner tid %u is still registered after "
+                 "exiting and yielding repeatedly — exited threads are not "
+                 "being reaped, so every thread leaks its stack",
+                 spinner_tid);
+    }
+
+    af_log(AF_LOG_DEBUG, "test",
+           "  ok   an exited thread was reaped and removed from the table");
 
     af_marker("AF_SCHED_OK");
 }

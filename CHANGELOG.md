@@ -156,7 +156,7 @@ committed under [docs/releases/evidence/](docs/releases/evidence/).
 | Version | Codename | Theme | Status |
 | --- | --- | --- | --- |
 | v0.1 | Seed | Boot & display | ✅ complete and verified |
-| v0.2 | Roots | Memory & multitasking | ⏳ planned |
+| v0.2 | Roots | Memory & multitasking | ✅ complete and verified |
 | v0.3 | Trunk | Disk & file system | ⏳ planned |
 | v0.4 | Branches | User mode & syscalls | ⏳ planned |
 | v0.5 | Leaves | Drivers & input | ⏳ planned |

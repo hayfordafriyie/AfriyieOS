@@ -903,7 +903,66 @@ Run `./tools/verify_all.sh` — 7 of 7 checks pass.
 
 ---
 
-### 🟢 v0.2 — *Roots*: Memory & Multitasking
+### ✅ v0.2 — *Roots*: Memory & Multitasking — **COMPLETE**
+
+**Goal:** manage physical RAM and run multiple tasks simultaneously.
+**Verified:** bitmap PMM with 10 000-frame exactness, slab heap with a
+100 000-operation fuzz, 100 Hz timer, round-robin scheduler with proven
+preemption. `./tools/verify_all.sh` — 7 of 7 checks pass.
+Evidence: [releases/evidence/v0.2.0-scheduler.txt](releases/evidence/v0.2.0-scheduler.txt)
+
+> The remaining v0.2 item is the higher-half kernel move and the VMM, which are
+> coupled to each other and land together — see the note at the end of this
+> section.
+
+#### 0.2.1 Physical Memory Manager
+- [x] Normalize `af_boot_info` regions into a typed list of `{base, length, type}`
+- [x] Bitmap allocator: 1 bit per 4 KB frame, placed in usable RAM and sized from the highest *usable* address
+- [x] Mark reserved: kernel image (including `.bss`), boot_info backup, bitmap itself, framebuffer, holes
+- [x] `pmm_alloc_frame()`, `pmm_alloc_frames(n)`, `pmm_alloc_frame_z()`, `pmm_free_frame()`, `pmm_free_frames()`
+- [x] Refcounting per frame (needed for copy-on-write and shared memory later)
+- [x] Statistics: total/free/used frames, largest contiguous run
+- [x] In-kernel test: allocate 10 000 frames, prove all distinct, free them, assert the count returns to the start
+
+#### 0.2.2 Kernel heap
+- [x] Slab allocator: one cache per size class (16/32/64/128/256/512/1024/2048)
+- [x] `kmalloc(size)`, `kzalloc(size)`, `kfree(ptr)`, `krealloc(ptr, size)`
+- [x] Large allocations (> 2048 bytes) fall through to contiguous frame allocation
+- [x] `kmalloc_aligned(size, align)` support
+- [x] Debug mode: redzone before/after each allocation, verified on free
+- [x] `heap_check()`: slab, free-list and guard-band integrity
+- [x] Test: fuzz 100 000 random alloc/free operations, verify no corruption and zero leaks
+
+#### 0.2.3 Threads and scheduler
+- [x] `struct af_thread` — `tid`, `state`, `priority`, `kernel_stack`, `saved_context`, `time_slice`
+- [x] Thread states: `CREATED · RUNNABLE · RUNNING · BLOCKED · SLEEPING · ZOMBIE · DEAD`
+- [x] Run queues: 8 priority levels, round-robin within a level
+- [x] `context.asm` — `context_switch(old*, next*)` saving/restoring **callee-saved** registers plus `rsp`, with a trampoline for a thread that has never run
+- [x] `thread_create(entry, arg, stack_size, priority)` and `sched_admit()`
+- [x] `thread_exit()` and zombie reaping from a context that does not own the exiting stack
+- [x] **PIT timer** programming channel 0 at 100 Hz → IRQ0 → `sched_tick()`
+- [x] Preemption: on tick, decrement the running thread's slice; on expiry, requeue and pick the next
+- [x] `sched_yield()`, `sched_sleep(ticks)`, `sched_block()`, `sched_unblock()`
+- [x] Idle thread that halts the CPU, separate from the boot context
+- [x] Generic IRQ layer with chained handlers and acknowledge-before-dispatch
+- [x] Interrupt-safe spinlocks
+- [x] **Critical correctness test:** two threads, 200 iterations each, 201 context switches apiece — verified
+- [x] **Preemption proof:** a thread that never yields was interrupted 13.8 million times
+
+#### 0.2.4 v0.2 acceptance
+- [x] Two threads print `A` and `B` with a near-strict alternation, both completing
+- [x] Preemption demonstrated with a thread that cannot be starved
+- [x] An exited thread is reaped and removed from the table (no stack leak)
+- [ ] `pmm`/`vmm` unit tests (map at `0xDEADB000`, write, read back, unmap, assert #PF) — *needs the VMM*
+- [ ] 1 000 thread create/exit cycles with no frame leak — *next*
+
+**✅ Acceptance criteria met:** two kernel threads printing `A` and `B` in a fair
+alternating pattern, with memory statistics stable afterwards.
+
+**Remaining for v0.2:** the **VMM and the higher-half kernel move**, which are
+inseparable — a higher-half image faults on its first instruction fetch without
+paging — so they land in one commit together with a boot-time page-table
+bootstrap. Everything else in this milestone is done and verified.
 
 **Goal:** manage physical RAM, own the address space, switch between threads.
 

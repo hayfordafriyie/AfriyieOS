@@ -221,6 +221,20 @@ static void switch_to(af_thread_t *next)
         runq_push(prev);
     }
 
+    // A thread that has exited must be queued for reaping. This is the ONLY
+    // place that notices: thread_exit() cannot free its own stack, so it marks
+    // itself a zombie and yields away, and nothing else looks at its state
+    // again. Without this the thread structure and its stack leak — silently,
+    // because a zombie is absent from every diagnostic that walks the run
+    // queues.
+    //
+    // Enqueuing is safe here even though we are standing on prev's stack: this
+    // only adds prev to a list. sched_collect_zombies() does the freeing, and it
+    // runs from the idle thread, which by definition is not prev.
+    if (prev != NULL && prev->state == AF_THREAD_ZOMBIE) {
+        sched_reap(prev);
+    }
+
     next->state = AF_THREAD_RUNNING;
     next->time_slice = AF_TIME_SLICE_TICKS;
     next->switches++;
@@ -424,6 +438,14 @@ void sched_reap(af_thread_t *thread)
     // it should not be — but a zombie that IS on the run queue would be picked
     // and resumed, and would then run with a freed stack.
     runq_remove(thread);
+
+    // Already queued? switch_to() calls this once per zombie, but a thread could
+    // in principle be reaped twice if a future caller also reports it.
+    for (af_u32 i = 0; i < s_zombie_count; i++) {
+        if (s_zombies[i] == thread) {
+            return;
+        }
+    }
 
     if (s_zombie_count < 16) {
         s_zombies[s_zombie_count++] = thread;

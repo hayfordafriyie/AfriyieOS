@@ -57,11 +57,31 @@ context_switch:
     mov [rdi + CTX_R14], r14
     mov [rdi + CTX_R15], r15
 
-    ; The return address is on our stack, and `ret` below will consume it from
-    ; the *incoming* stack. So we must pop it ourselves and record rsp AFTER the
-    ; pop, otherwise the resumed thread would return into a stale frame.
-    lea rax, [rsp + 8]
-    mov [rdi + CTX_RSP], rax
+    ; =========================================================================
+    ; SAVE rsp POINTING *AT* THE RETURN ADDRESS, NOT PAST IT
+    ; =========================================================================
+    ; This is the single most delicate line in the kernel, and the first version
+    ; got it wrong with a plausible-sounding justification.
+    ;
+    ; The mistake: "our return address will not be popped by the `ret` below, so
+    ; record rsp after it" — hence `lea rax, [rsp + 8]`. That skips eight bytes,
+    ; and when this thread is resumed, `mov rsp, [ctx+CTX_RSP]` followed by `ret`
+    ; pops whatever happens to sit at that slot instead of the real return
+    ; address. The CPU then jumps to garbage.
+    ;
+    ; The observed failure was an invalid-opcode fault with RIP inside .bss —
+    ; a control transfer to a data address — with a stack belonging to one of the
+    ; worker threads. Nothing looked wrong; the scheduler simply resumed into the
+    ; middle of nowhere a few hundred switches in.
+    ;
+    ; The correct convention is the one a `call`/`ret` pair already uses: rsp
+    ; points at the return address. Saving rsp unchanged means the outgoing
+    ; thread's return address stays on ITS stack, and the `ret` below consumes
+    ; the INCOMING thread's. Both cases then work with no arithmetic at all —
+    ; including a brand new thread, whose stack has thread_trampoline sitting in
+    ; exactly that slot.
+    ; =========================================================================
+    mov [rdi + CTX_RSP], rsp
 
     ; --- restore the incoming context ---
     mov rbx, [rsi + CTX_RBX]
