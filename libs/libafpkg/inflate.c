@@ -542,8 +542,16 @@ static af_status_t read_dynamic_tables(bitreader_t *br,
 // -----------------------------------------------------------------------------
 af_status_t afpkg_inflate(const af_u8 *data, af_size len,
                           af_u8 *out_base, af_size out_size,
-                          af_size *out_len, const char **why)
+                          af_size *out_len, af_size *out_consumed,
+                          const char **why)
 {
+    if (out_len != NULL) {
+        *out_len = 0;
+    }
+    if (out_consumed != NULL) {
+        *out_consumed = 0;
+    }
+
     if (data == NULL || out_base == NULL || out_len == NULL) {
         *why = "no input or output buffer";
         return AF_ERR_INVAL;
@@ -629,6 +637,21 @@ af_status_t afpkg_inflate(const af_u8 *data, af_size len,
     }
 
     *out_len = out.used;
+
+    if (out_consumed != NULL) {
+        // How far into the input the stream reached, ROUNDED UP to a byte
+        // boundary — which is what gzip pads to before writing the trailer.
+        //
+        // The bit reader loads bytes eagerly, so `br.byte` counts bytes it has
+        // READ, not bits it has CONSUMED; the difference is what is still
+        // sitting in the buffer. Subtracting those bits and rounding up gives
+        // the position of the first byte after the stream, which is where the
+        // caller's trailer begins.
+        const af_size bits_used = br.byte * 8u - br.count;
+        const af_size bytes_used = (bits_used + 7u) / 8u;
+        *out_consumed = (bytes_used <= len) ? bytes_used : len;
+    }
+
     *why = "inflated";
     return AF_OK;
 }

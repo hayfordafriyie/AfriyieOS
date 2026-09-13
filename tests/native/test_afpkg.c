@@ -554,15 +554,167 @@ static void test_deflate(const char *dir)
     // The first byte is a final dynamic block header, then nothing.
     const unsigned char truncated[] = { 0x05, 0x00 };
     check(afpkg_inflate(truncated, sizeof(truncated), s_scratch, sizeof(s_scratch),
-                        &out_len, &why) != AF_OK,
+                        &out_len, NULL, &why) != AF_OK,
           "a DEFLATE stream that ends mid-header is an error");
 
     // An empty input is the case a loop written as `while (offset < len)` gets
     // wrong: it produces no blocks at all and looks like success.
     const unsigned char nothing[] = { 0x00 };
     check(afpkg_inflate(nothing, 0, s_scratch, sizeof(s_scratch),
-                        &out_len, &why) != AF_OK,
+                        &out_len, NULL, &why) != AF_OK,
           "an empty DEFLATE stream is an error, not an empty result");
+}
+
+
+// =============================================================================
+// 5. Alpine Linux packages
+//
+// A different distribution, a different format, and — the part that matters — a
+// different CONTAINER SHAPE. A .deb is an ar archive holding two gzip members.
+// An Alpine .apk is several gzip members CONCATENATED in one file, with no outer
+// container at all. A reader written only against .deb assumes there is always
+// an index of members, and in this format there is not.
+// =============================================================================
+static afpkg_scratch_t s_apk_scratch;
+
+static void test_apk(const char *dir)
+{
+    printf("\n=== Alpine packages ===\n");
+
+    s_apk_scratch.base = s_scratch;
+    s_apk_scratch.size = sizeof(s_scratch);
+
+    if (load(dir, "test_1.2.3-r0_x86_64.apk") != 0) {
+        s_failures++;
+        return;
+    }
+
+    af_pkg_t pkg;
+    const af_status_t rc = afpkg_open(s_file, (af_size)s_file_len,
+                                      &s_apk_scratch, &pkg);
+    check(rc == AF_OK, "a generated .apk reads successfully");
+    if (rc != AF_OK) {
+        printf("  reason: %s\n", afpkg_error(&pkg));
+        unload();
+        return;
+    }
+
+    // ALPINE's type, not Android's. Both are called .apk and have nothing else
+    // in common; a reader that confuses them installs an Alpine package as an
+    // Android app.
+    check(pkg.format == AF_BINFMT_APK_PKG,
+          "identified as an Alpine package, not an Android one");
+
+    check_str(pkg.info.name, "afriyie-test", "pkgname");
+    check_str(pkg.info.version, "1.2.3-r0", "pkgver");
+    check_str(pkg.info.architecture, "x86_64", "arch");
+    check_str(pkg.info.description, "a synthetic Alpine package", "pkgdesc");
+    check_u64(pkg.info.installed_size, 4096, "size");
+
+    // TWO `depend` lines, not one comma-separated list. Alpine writes one line
+    // per dependency, and a parser that split on commas would turn
+    // "so:libc.musl-x86_64.so.1" into two pieces of nonsense.
+    check(pkg.info.depends_count == 2, "two dependencies, one per line");
+    if (pkg.info.depends_count == 2) {
+        check_str(pkg.info.depends[0], "musl", "the first dependency");
+        check_str(pkg.info.depends[1], "so:libc.musl-x86_64.so.1",
+                  "a dependency containing a colon survives intact");
+    }
+
+    // --- the concatenated members --------------------------------------------
+    //
+    // THE TEST THIS FORMAT EXISTS FOR. The data tar is the LAST gzip member, and
+    // a reader that inflates one member and stops gets the control tar — which
+    // holds .PKGINFO and no payload. It would read the metadata correctly and
+    // install nothing, which is the most misleading kind of wrong.
+    afpkg_iter_t it;
+    afpkg_iter_begin(&it);
+
+    af_pkg_entry_t entry;
+    int files = 0;
+    int dirs = 0;
+    int saw_binary = 0;
+    int saw_pkginfo = 0;
+
+    while (afpkg_iter_next(&pkg, &it, &entry)) {
+        if (entry.is_directory) {
+            dirs++;
+        } else {
+            files++;
+        }
+        if (strcmp(entry.path, "usr/bin/afriyie-test") == 0) {
+            saw_binary = 1;
+        }
+        if (strcmp(entry.path, ".PKGINFO") == 0) {
+            // .PKGINFO is in the CONTROL member. Finding it in the file list
+            // means the reader walked the wrong member.
+            saw_pkginfo = 1;
+        }
+    }
+
+    check(saw_binary == 1, "the payload from the LAST gzip member was reached");
+    check(saw_pkginfo == 0,
+          "and the control member's .PKGINFO is NOT in the file list");
+    check(files == 2, "two regular files in the data member");
+    check(dirs == 3, "three directories in the data member");
+
+    unload();
+
+    // --- a corrupted package --------------------------------------------------
+    //
+    // The case the CRC32 exists for. A bit flipped inside compressed data very
+    // often produces a stream that still inflates — to the wrong bytes — so
+    // without the trailer check this package installs and the corruption
+    // surfaces later, in whatever the package does.
+    printf("\n=== an Alpine package with a corrupted member ===\n");
+
+    if (load(dir, "badcrc_1.2.3-r0_x86_64.apk") != 0) {
+        s_failures++;
+        return;
+    }
+
+    af_pkg_t bad;
+    const af_status_t rc_bad = afpkg_open(s_file, (af_size)s_file_len,
+                                          &s_apk_scratch, &bad);
+    check(rc_bad != AF_OK, "a bit-flipped package is refused");
+    check(rc_bad == AF_ERR_FS_CORRUPT, "and refused as corrupt, not as invalid");
+    printf("  reason: %s\n", afpkg_error(&bad));
+
+    unload();
+
+    // --- a truncated package --------------------------------------------------
+    printf("\n=== an Alpine package truncated mid-member ===\n");
+
+    if (load(dir, "truncated_1.2.3-r0_x86_64.apk") != 0) {
+        s_failures++;
+        return;
+    }
+
+    af_pkg_t cut;
+    const af_status_t rc_cut = afpkg_open(s_file, (af_size)s_file_len,
+                                          &s_apk_scratch, &cut);
+    check(rc_cut != AF_OK, "a package cut mid-member is refused");
+    check(strstr(afpkg_error(&cut), "truncated") != NULL,
+          "and the reason says truncated rather than corrupt");
+
+    unload();
+
+    // --- a gzipped tar that is not a package ---------------------------------
+    printf("\n=== a gzipped tar that is not a package ===\n");
+
+    if (load(dir, "deflate_text.5.gz") != 0) {
+        s_failures++;
+        return;
+    }
+
+    af_pkg_t notpkg;
+    const af_status_t rc_not = afpkg_open(s_file, (af_size)s_file_len,
+                                          &s_apk_scratch, &notpkg);
+    check(rc_not != AF_OK, "a gzipped tar with no .PKGINFO is refused");
+    check(strstr(afpkg_error(&notpkg), "not an Alpine package") != NULL,
+          "and the reason names what it actually is");
+
+    unload();
 }
 
 // =============================================================================
@@ -580,6 +732,7 @@ int main(int argc, char **argv)
     test_no_control_file(dir);
     test_layers(dir);
     test_deflate(dir);
+    test_apk(dir);
 
     printf("\n===============================================================\n");
     if (s_failures == 0) {

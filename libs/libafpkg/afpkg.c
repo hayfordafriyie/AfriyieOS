@@ -306,12 +306,63 @@ af_status_t afpkg_ar_find_control(const af_u8 *data, af_size len,
 // a partial Huffman implementation produces wrong bytes, and wrong bytes from a
 // decompressor are indistinguishable from a corrupt package.
 // =============================================================================
-af_status_t afpkg_gunzip(const af_u8 *data, af_size len,
-                         afpkg_scratch_t scratch, af_size *out_len,
-                         const char **why)
+// -----------------------------------------------------------------------------
+// CRC32
+//
+// The gzip trailer carries a CRC32 of the decompressed bytes, and it is the only
+// thing in the format that detects corruption which still decompresses. A
+// bit-flip inside the compressed data frequently produces a perfectly valid
+// stream that decodes to the wrong bytes, and without the check that package
+// installs.
+//
+// BITWISE RATHER THAN TABLE-DRIVEN. A 256-entry table is 1 KiB of .rodata and is
+// faster; this is eight shifts per byte and costs nothing at the sizes involved.
+// The table can arrive when profiling says it should, which is the same argument
+// as everywhere else: write the version whose correctness is obvious, and let a
+// measurement, rather than an instinct, ask for the other one.
+// -----------------------------------------------------------------------------
+static af_u32 crc32_bytes(const af_u8 *data, af_size len)
 {
+    af_u32 crc = 0xFFFFFFFFu;
+
+    for (af_size i = 0; i < len; i++) {
+        crc ^= (af_u32)data[i];
+        for (int bit = 0; bit < 8; bit++) {
+            // 0xEDB88320 is the reversed CRC-32 polynomial. The mask is `-(crc & 1)`
+            // rather than a branch, because a branch here is a misprediction on
+            // half of all bytes.
+            crc = (crc >> 1) ^ (0xEDB88320u & (af_u32)(-(af_i32)(crc & 1u)));
+        }
+    }
+
+    return crc ^ 0xFFFFFFFFu;
+}
+
+// -----------------------------------------------------------------------------
+// One gzip member
+//
+// A gzip FILE may contain several members concatenated — that is how Alpine's
+// .apk is built, and how `cat a.gz b.gz` works. This inflates exactly one and
+// reports how many input bytes it consumed, so a caller can walk them.
+//
+// The trailer is VERIFIED here: CRC32 of the output and the output length. The
+// first version of this function checked neither and said so in a comment, which
+// was honest and was still a hole — a corrupted package would install and the
+// damage would surface in whatever the package did.
+// -----------------------------------------------------------------------------
+af_status_t afpkg_gunzip_member(const af_u8 *data, af_size len,
+                                afpkg_scratch_t scratch, af_size *out_len,
+                                af_size *consumed, const char **why)
+{
+    if (out_len != NULL) {
+        *out_len = 0;
+    }
+    if (consumed != NULL) {
+        *consumed = 0;
+    }
+
     if (data == NULL || len < 18) {
-        *why = "gzip stream too short to contain a header";
+        *why = "gzip stream too short to contain a header and a trailer";
         return AF_ERR_INVAL;
     }
 
@@ -327,15 +378,26 @@ af_status_t afpkg_gunzip(const af_u8 *data, af_size len,
     const af_u8 flags = data[3];
     af_size at = 10;
 
+    if ((flags & 0xE0) != 0) {
+        // The three high bits are reserved and must be zero. A stream that sets
+        // one is not gzip, whatever else it looks like.
+        *why = "gzip header has reserved flag bits set";
+        return AF_ERR_FS_CORRUPT;
+    }
+
     // Optional fields, in the order the format specifies. They must be skipped
     // in order and their lengths honoured, or the deflate stream starts at the
-    // wrong byte and the first block header is read from a filename.
+    // wrong byte and the first block header is read out of a filename.
     if ((flags & 0x04) != 0) {                  // FEXTRA
         if (!region_ok(data, len, at, 2)) {
             *why = "gzip FEXTRA length is past the end of the stream";
             return AF_ERR_FS_CORRUPT;
         }
         const af_size xlen = (af_size)data[at] | ((af_size)data[at + 1] << 8);
+        if (!region_ok(data, len, at + 2, xlen)) {
+            *why = "gzip FEXTRA runs past the end of the stream";
+            return AF_ERR_FS_CORRUPT;
+        }
         at += 2 + xlen;
     }
     if ((flags & 0x08) != 0) {                  // FNAME
@@ -359,30 +421,73 @@ af_status_t afpkg_gunzip(const af_u8 *data, af_size len,
         return AF_ERR_INVAL;
     }
 
-    // The DEFLATE payload sits between the header just parsed and the 8-byte
-    // trailer. Handing the whole remainder to the inflater would let it run into
-    // the CRC and length and, on a corrupt stream, decode them as data — so the
-    // bounds are tightened here rather than trusted downstream.
     if (at + 8 > len) {
         *why = "gzip stream is too short to contain its trailer";
         return AF_ERR_FS_CORRUPT;
     }
 
-    *out_len = 0;
-    const af_status_t rc = afpkg_inflate(data + at, len - at - 8,
+    // THE DEFLATE STREAM IS NOT NECESSARILY THE REST OF THE BUFFER, and computing
+    // the trailer as "eight bytes before the end" is wrong the moment a second
+    // member follows — which is every Alpine .apk. The inflater reports where it
+    // finished instead.
+    af_size produced = 0;
+    af_size deflate_used = 0;
+
+    const af_status_t rc = afpkg_inflate(data + at, len - at,
                                          scratch.base, scratch.size,
-                                         out_len, why);
+                                         &produced, &deflate_used, why);
     if (af_status_err(rc)) {
         return rc;
     }
 
-    // The trailer's CRC32 and ISIZE are deliberately NOT verified yet, and that
-    // is stated rather than implied. Doing it needs a CRC32 implementation,
-    // which is its own small piece of work; until then a stream that inflates to
-    // the wrong bytes is caught by the caller comparing lengths, and a
-    // bit-flipped stream that still inflates is not caught at all.
-    *why = "inflated";
+    if (!region_ok(data, len, at + deflate_used, 8)) {
+        *why = "gzip stream has no trailer after its deflate data";
+        return AF_ERR_FS_CORRUPT;
+    }
+
+    // The trailer. ISIZE is the uncompressed length MODULO 2^32, so the
+    // comparison has to be masked the same way — checking a 64-bit length
+    // against a 32-bit field rejects every stream over 4 GiB and, worse, would
+    // have looked like a CRC failure.
+    const af_u8 *trailer = data + at + deflate_used;
+    const af_u32 want_crc = (af_u32)trailer[0] | ((af_u32)trailer[1] << 8) |
+                            ((af_u32)trailer[2] << 16) | ((af_u32)trailer[3] << 24);
+    const af_u32 want_size = (af_u32)trailer[4] | ((af_u32)trailer[5] << 8) |
+                             ((af_u32)trailer[6] << 16) | ((af_u32)trailer[7] << 24);
+
+    if (want_size != (af_u32)(produced & 0xFFFFFFFFu)) {
+        *why = "gzip trailer ISIZE does not match the decompressed length — "
+               "the stream is corrupt";
+        return AF_ERR_FS_CORRUPT;
+    }
+
+    const af_u32 got_crc = crc32_bytes(scratch.base, produced);
+    if (got_crc != want_crc) {
+        *why = "gzip trailer CRC32 does not match the decompressed bytes — "
+               "the stream is corrupt";
+        return AF_ERR_FS_CORRUPT;
+    }
+
+    if (out_len != NULL) {
+        *out_len = produced;
+    }
+    if (consumed != NULL) {
+        // Header + this member's deflate data + its trailer. This is what makes
+        // a concatenated file walkable: the caller advances by exactly this and
+        // lands on the next member's magic.
+        *consumed = at + deflate_used + 8;
+    }
+
+    *why = "inflated one member, trailer verified";
     return AF_OK;
+}
+
+af_status_t afpkg_gunzip(const af_u8 *data, af_size len,
+                         afpkg_scratch_t scratch, af_size *out_len,
+                         const char **why)
+{
+    af_size consumed = 0;
+    return afpkg_gunzip_member(data, len, scratch, out_len, &consumed, why);
 }
 
 // =============================================================================
@@ -601,6 +706,209 @@ void afpkg_parse_control(const char *text, af_size len, af_pkg_info_t *out)
     }
 }
 
+
+// =============================================================================
+// Alpine Linux packages
+//
+// NOT AN ANDROID .apk. Alpine's is a gzipped tar containing a `.PKGINFO` file;
+// Android's is a ZIP containing a DEX and a manifest. They share three letters
+// and nothing else, which is why the format constants in binfmt.h are named
+// AF_BINFMT_APK_PKG and AF_BINFMT_APK_ANDROID rather than both being "apk".
+//
+// THE STRUCTURE THAT MAKES THIS WORTH ITS OWN READER: a .apk is not one gzip
+// stream holding one tar. It is several gzip members CONCATENATED in one file —
+// the signature tar, then the control tar holding .PKGINFO, then the data tar.
+// A reader that inflates one member and stops gets the signature and installs
+// nothing. A reader that inflates them all into one buffer and walks the result
+// as a single tar gets every file in the package, including the ones that are
+// metadata rather than payload.
+//
+// So the members are walked one at a time, each treated as its own archive, and
+// the LAST member is the data tar — which is the only one whose contents are
+// files to install.
+// =============================================================================
+#define APK_PKGINFO_MAX (16 * 1024)
+
+// Parses a `.PKGINFO` file: "key = value" lines, with '#' comments.
+//
+// Separate from the Debian control parser because the formats are separate. They
+// look alike and are not: Debian uses "Field: value" with continuation lines and
+// a blank line terminating a paragraph; Alpine uses "key = value" with no
+// continuations and no paragraphs. Sharing one parser between them would mean a
+// parser that is wrong about both.
+static void afpkg_parse_pkginfo(const char *text, af_size len, af_pkg_info_t *out)
+{
+    af_size at = 0;
+
+    while (at < len) {
+        af_size eol = at;
+        while (eol < len && text[eol] != '\n') {
+            eol++;
+        }
+
+        af_size line_start = at;
+        while (line_start < eol && (text[line_start] == ' ' ||
+                                    text[line_start] == '\t' ||
+                                    text[line_start] == '\r')) {
+            line_start++;
+        }
+
+        if (line_start < eol && text[line_start] != '#') {
+            // Find the '='.
+            af_size eq = line_start;
+            while (eq < eol && text[eq] != '=') {
+                eq++;
+            }
+
+            if (eq < eol) {
+                char key[64];
+                copy_trim(key, sizeof(key), text + line_start, eq - line_start);
+
+                const char *value = text + eq + 1;
+                af_size value_len = eol - eq - 1;
+                while (value_len > 0 && (*value == ' ' || *value == '\t')) {
+                    value++;
+                    value_len--;
+                }
+
+                if (afpkg_strcmp(key, "pkgname") == 0) {
+                    copy_trim(out->name, AFPKG_NAME_LEN, value, value_len);
+                } else if (afpkg_strcmp(key, "pkgver") == 0) {
+                    copy_trim(out->version, AFPKG_VERSION_LEN, value, value_len);
+                } else if (afpkg_strcmp(key, "arch") == 0) {
+                    copy_trim(out->architecture, AFPKG_ARCH_LEN, value, value_len);
+                } else if (afpkg_strcmp(key, "packager") == 0) {
+                    copy_trim(out->maintainer, AFPKG_MAINTAINER_LEN, value, value_len);
+                } else if (afpkg_strcmp(key, "pkgdesc") == 0) {
+                    copy_trim(out->description, AFPKG_DESCRIPTION_LEN, value, value_len);
+                } else if (afpkg_strcmp(key, "size") == 0) {
+                    out->installed_size = parse_ascii_dec((const af_u8 *)value, value_len);
+                } else if (afpkg_strcmp(key, "depend") == 0) {
+                    // One `depend` line per dependency, not a comma-separated
+                    // list. Treating it as a list would make "so:libc.musl-x86_64.so.1"
+                    // parse as two dependencies with a colon in the first.
+                    set_depends(out, value, value_len);
+                } else if (afpkg_strcmp(key, "provides") == 0) {
+                    if (out->provides_count < AFPKG_MAX_DEPENDS) {
+                        copy_trim(out->provides[out->provides_count], AFPKG_NAME_LEN,
+                                  value, value_len);
+                        out->provides_count++;
+                    }
+                }
+            }
+        }
+
+        at = eol + 1;
+    }
+}
+
+static af_status_t read_apk(const af_u8 *data, af_size len,
+                            const afpkg_scratch_t *scratch, af_pkg_t *out)
+{
+    if (scratch == NULL) {
+        out->error = "reading a compressed package needs a scratch buffer";
+        return AF_ERR_INVAL;
+    }
+
+    if (data[0] != 0x1F || data[1] != 0x8B) {
+        out->error = "not an Alpine package: it does not begin with a gzip member";
+        return AF_ERR_INVAL;
+    }
+
+    af_pkg_info_t info;
+    afpkg_memset(&info, 0, sizeof(info));
+
+    af_size offset = 0;
+    af_size data_len = 0;
+    af_size members = 0;
+    bool found_pkginfo = false;
+    const char *why = "";
+
+    while (offset < len) {
+        af_size out_len = 0;
+        af_size consumed = 0;
+
+        const af_status_t rc = afpkg_gunzip_member(data + offset, len - offset,
+                                                   *scratch, &out_len, &consumed,
+                                                   &why);
+        if (af_status_err(rc)) {
+            // A truncated final member is common enough to be worth naming:
+            // an interrupted download produces exactly this, and "corrupt"
+            // alone sends the reader looking for a parsing bug.
+            out->error = (offset > 0)
+                ? "the package ends inside a gzip member — it is truncated"
+                : why;
+            return rc;
+        }
+
+        members++;
+
+        // Look for .PKGINFO in THIS member, before the next one overwrites the
+        // buffer. The control member is the one that has it and it is not always
+        // first: a signed .apk puts the signature tar ahead of it.
+        if (!found_pkginfo) {
+            af_size cursor = 0;
+            af_pkg_entry_t entry;
+            const af_u8 *contents = NULL;
+            af_size contents_len = 0;
+
+            while (true) {
+                const af_status_t walked =
+                    afpkg_tar_next(scratch->base, out_len, &cursor, &entry,
+                                   &contents, &contents_len, &why);
+                if (walked == AF_ERR_AGAIN) {
+                    continue;
+                }
+                if (af_status_err(walked)) {
+                    break;
+                }
+
+                if (afpkg_strcmp(entry.path, ".PKGINFO") == 0) {
+                    if (contents_len > APK_PKGINFO_MAX) {
+                        out->error = ".PKGINFO is implausibly large";
+                        return AF_ERR_FS_CORRUPT;
+                    }
+                    afpkg_parse_pkginfo((const char *)contents, contents_len, &info);
+                    found_pkginfo = true;
+                    break;
+                }
+            }
+        }
+
+        // The last member seen so far is the data tar. After the loop it is the
+        // one still in the buffer, because each member is inflated over the
+        // previous — which is also why nothing may hold a pointer into an
+        // earlier member.
+        data_len = out_len;
+
+        offset += consumed;
+
+        if (consumed == 0) {
+            out->error = "a gzip member consumed no input — malformed stream";
+            return AF_ERR_FS_CORRUPT;
+        }
+    }
+
+    if (!found_pkginfo) {
+        out->error = "no .PKGINFO in any gzip member — this is a gzipped tar, "
+                     "but it is not an Alpine package";
+        return AF_ERR_INVAL;
+    }
+
+    if (info.name[0] == '\0' || info.version[0] == '\0') {
+        out->error = ".PKGINFO has no pkgname or pkgver";
+        return AF_ERR_FS_CORRUPT;
+    }
+
+    out->info       = info;
+    out->data_tar     = scratch->base;
+    out->data_tar_len = data_len;
+    out->format     = AF_BINFMT_APK_PKG;
+
+    (void)members;
+    return AF_OK;
+}
+
 // =============================================================================
 // Reading a package
 // =============================================================================
@@ -764,9 +1072,18 @@ af_status_t afpkg_open(const af_u8 *data, af_size len,
     }
 
     // The container decides the reader. A .deb is an ar archive; an Alpine .apk
-    // is a gzipped tar; a pacman package is a zstd tar. Adding a format means
-    // adding a branch here and a function below, not restructuring anything.
-    const af_status_t rc = read_deb(data, len, scratch, out);
+    // is a chain of gzipped tars; a pacman package is a zstd tar. Adding a
+    // format means adding a branch here and a function below, not restructuring
+    // anything — which is the whole reason the layers were separated.
+    af_status_t rc;
+
+    if (len >= 2 && data[0] == 0x1F && data[1] == 0x8B) {
+        rc = read_apk(data, len, scratch, out);
+        out->valid = !af_status_err(rc);
+        return rc;
+    }
+
+    rc = read_deb(data, len, scratch, out);
 
     out->valid = !af_status_err(rc);
     return rc;

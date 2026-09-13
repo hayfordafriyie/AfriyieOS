@@ -194,18 +194,37 @@ af_status_t afpkg_ar_find_control(const af_u8 *data, af_size len,
 // Inflates a gzip stream into `scratch`.
 //
 // Handles all three DEFLATE block types — stored, fixed Huffman and dynamic
-// Huffman — with LZ77 back-references. That is the full format as RFC 1951
-// defines it and it is what makes real packages readable.
+// Huffman — with LZ77 back-references, and VERIFIES the trailer: CRC32 of the
+// decompressed bytes and their length. A bit-flip inside compressed data often
+// produces a valid stream that decodes to the wrong bytes, and the trailer is
+// the only thing that detects it.
 af_status_t afpkg_gunzip(const af_u8 *data, af_size len,
                          afpkg_scratch_t scratch, af_size *out_len,
                          const char **why);
 
+// Inflates ONE gzip member and reports how many input bytes it consumed.
+//
+// A gzip FILE may hold several members concatenated — that is how Alpine's .apk
+// is built, and how `cat a.gz b.gz` works. A caller that needs to walk them uses
+// this; a caller with a single member uses afpkg_gunzip, which is this function
+// with the count discarded.
+af_status_t afpkg_gunzip_member(const af_u8 *data, af_size len,
+                                afpkg_scratch_t scratch, af_size *out_len,
+                                af_size *consumed, const char **why);
+
 // The raw DEFLATE layer, exposed because it is independently testable and
 // because gzip is a wrapper around it rather than the thing itself. A bug in the
 // wrapper and a bug in the encoder should not be attributable to each other.
+//
+// `out_consumed`, when not NULL, receives the number of INPUT bytes the stream
+// occupied. gzip needs this: a member's trailer follows its deflate data
+// immediately, and in a file holding several concatenated members the trailer is
+// nowhere near the end of the buffer — so the position has to be reported rather
+// than calculated.
 af_status_t afpkg_inflate(const af_u8 *data, af_size len,
                           af_u8 *out_base, af_size out_size,
-                          af_size *out_len, const char **why);
+                          af_size *out_len, af_size *out_consumed,
+                          const char **why);
 
 // Iterates a tar archive held in memory.
 af_status_t afpkg_tar_next(const af_u8 *data, af_size len, af_size *cursor,

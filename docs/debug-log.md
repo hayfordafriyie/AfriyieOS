@@ -21,6 +21,75 @@ Lesson:     the generalisable part
 
 ---
 
+## 2026 — Entries from the Alpine work
+
+### The trailer was eight bytes before the end of the wrong thing
+
+**Milestone:** v0.9a
+**Symptom:** the first Alpine package ever fed to the reader was refused:
+
+```
+FAIL  a generated .apk reads successfully
+  reason: gzip trailer ISIZE does not match the decompressed length — the stream is corrupt
+```
+on a package that `gzip -t` and Python's `gzip` both read perfectly.
+**Cause:** `afpkg_gunzip_member` located the gzip trailer eight bytes before the
+end of the BUFFER it was handed:
+
+```c
+const af_u8 *trailer = data + at + (len - at - 8);
+```
+
+That is correct only when the buffer contains exactly one member. It was true for
+every .deb — each of a .deb's compressed parts is its own ar member, handed over
+as its own buffer — and it is false for the first Alpine package tried, because
+an Alpine .apk is several gzip members CONCATENATED in one file with no outer
+container at all. The reader looked for the first member's trailer at the end of
+the file, found bytes belonging to the second member, and reported a CRC/length
+mismatch on a perfectly good package.
+**Fix:** stop calculating where the deflate stream ended and be told.
+`afpkg_inflate` now reports the input bytes it consumed — `(bits_used + 7) / 8`,
+because the bit reader loads bytes eagerly and `br.byte` counts bytes *read*, not
+bits *consumed*. The trailer follows that position, and `consumed` is what lets
+the caller land on the next member's magic.
+**Found by:** a fixture built specifically to have two members. Every .deb test
+passed before and after, because a .deb cannot express this case — its members
+come from an index rather than from concatenation. The format difference IS the
+test.
+**Lesson:** a function that infers a boundary from the end of its buffer is
+assuming its buffer ends where the structure ends. That assumption is invisible
+while every caller happens to satisfy it, and it is exactly what a new container
+shape breaks. The fix is always the same shape: the layer that knows where
+something ended should say so, rather than the next layer up working it out from
+the total length.
+
+---
+
+### Two functions that both parse "a package description"
+
+**Milestone:** v0.9a (a design note, written while adding the Alpine reader)
+**Symptom:** none — this is the decision that avoided one.
+**Cause:** Debian's control file and Alpine's `.PKGINFO` look alike. Both are
+plain text. Both are a list of fields. The obvious move is one parser with a
+couple of flags.
+
+They are not alike where it matters. Debian is `Field: value` with a single space
+after the colon, continuation lines indented by one space, and a blank line
+terminating a paragraph. Alpine is `key = value` with spaces around the equals,
+no continuations, no paragraphs, and `#` comments. Alpine also writes one
+`depend` line per dependency rather than a comma-separated list — so a shared
+parser that split on commas would turn `so:libc.musl-x86_64.so.1` into two pieces
+of nonsense and lose the dependency silently.
+**Decision:** two parsers, each about forty lines, each readable against its own
+format.
+**Lesson:** "these two formats are basically the same" is a claim about their
+appearance, and the differences are always in the parts that carry meaning —
+delimiters, continuations, how lists are represented. A flag-driven parser for
+two formats is a parser that is subtly wrong for one of them, and the wrongness
+lands in the data rather than in an error.
+
+---
+
 ## 2026 — Entries from the DEFLATE work
 
 ### The fixtures were not DEFLATE
