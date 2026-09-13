@@ -1,0 +1,326 @@
+// SPDX-License-Identifier: MIT
+// AfriyieOS — x86_64 IDT and exception dispatch
+
+#include "x86_64.h"
+#include "afriyie/io.h"
+#include "afriyie/log.h"
+#include "afriyie/assert.h"
+#include "afriyie/kstring.h"
+
+// -----------------------------------------------------------------------------
+// IDT gate descriptor
+// -----------------------------------------------------------------------------
+typedef struct AF_PACKED {
+    af_u16 offset_low;
+    af_u16 selector;
+    af_u8  ist;          // interrupt stack table index (bits 0..2)
+    af_u8  type_attr;
+    af_u16 offset_middle;
+    af_u32 offset_high;
+    af_u32 reserved;
+} af_idt_entry_t;
+
+AF_STATIC_ASSERT_SIZE(af_idt_entry_t, 16);
+
+typedef struct AF_PACKED {
+    af_u16 limit;
+    af_u64 base;
+} af_idt_pointer_t;
+
+// 0x8E = present, ring 0, 64-bit interrupt gate (interrupts disabled on entry).
+// An interrupt gate rather than a trap gate is deliberate: a trap gate leaves
+// IF as it was, so an exception inside an interrupt handler would nest.
+#define IDT_GATE_INTERRUPT_64 0x8Eu
+
+static af_idt_entry_t   s_idt[256] __attribute__((aligned(16)));
+static af_idt_pointer_t s_idt_pointer;
+
+// -----------------------------------------------------------------------------
+// Stubs generated in isr.asm
+// -----------------------------------------------------------------------------
+#define AF_DECLARE_ISR(n) extern void isr##n(void);
+
+AF_DECLARE_ISR(0)   AF_DECLARE_ISR(1)   AF_DECLARE_ISR(2)   AF_DECLARE_ISR(3)
+AF_DECLARE_ISR(4)   AF_DECLARE_ISR(5)   AF_DECLARE_ISR(6)   AF_DECLARE_ISR(7)
+AF_DECLARE_ISR(8)   AF_DECLARE_ISR(9)   AF_DECLARE_ISR(10)  AF_DECLARE_ISR(11)
+AF_DECLARE_ISR(12)  AF_DECLARE_ISR(13)  AF_DECLARE_ISR(14)  AF_DECLARE_ISR(15)
+AF_DECLARE_ISR(16)  AF_DECLARE_ISR(17)  AF_DECLARE_ISR(18)  AF_DECLARE_ISR(19)
+AF_DECLARE_ISR(20)  AF_DECLARE_ISR(21)  AF_DECLARE_ISR(22)  AF_DECLARE_ISR(23)
+AF_DECLARE_ISR(24)  AF_DECLARE_ISR(25)  AF_DECLARE_ISR(26)  AF_DECLARE_ISR(27)
+AF_DECLARE_ISR(28)  AF_DECLARE_ISR(29)  AF_DECLARE_ISR(30)  AF_DECLARE_ISR(31)
+AF_DECLARE_ISR(32)  AF_DECLARE_ISR(33)  AF_DECLARE_ISR(34)  AF_DECLARE_ISR(35)
+AF_DECLARE_ISR(36)  AF_DECLARE_ISR(37)  AF_DECLARE_ISR(38)  AF_DECLARE_ISR(39)
+AF_DECLARE_ISR(40)  AF_DECLARE_ISR(41)  AF_DECLARE_ISR(42)  AF_DECLARE_ISR(43)
+AF_DECLARE_ISR(44)  AF_DECLARE_ISR(45)  AF_DECLARE_ISR(46)  AF_DECLARE_ISR(47)
+
+static void *const s_stub_table[48] = {
+    (void *)isr0,  (void *)isr1,  (void *)isr2,  (void *)isr3,
+    (void *)isr4,  (void *)isr5,  (void *)isr6,  (void *)isr7,
+    (void *)isr8,  (void *)isr9,  (void *)isr10, (void *)isr11,
+    (void *)isr12, (void *)isr13, (void *)isr14, (void *)isr15,
+    (void *)isr16, (void *)isr17, (void *)isr18, (void *)isr19,
+    (void *)isr20, (void *)isr21, (void *)isr22, (void *)isr23,
+    (void *)isr24, (void *)isr25, (void *)isr26, (void *)isr27,
+    (void *)isr28, (void *)isr29, (void *)isr30, (void *)isr31,
+    (void *)isr32, (void *)isr33, (void *)isr34, (void *)isr35,
+    (void *)isr36, (void *)isr37, (void *)isr38, (void *)isr39,
+    (void *)isr40, (void *)isr41, (void *)isr42, (void *)isr43,
+    (void *)isr44, (void *)isr45, (void *)isr46, (void *)isr47,
+};
+
+static void set_gate(af_u32 vector, void *handler)
+{
+    af_u64 addr = (af_u64)(af_uptr)handler;
+    af_idt_entry_t *g = &s_idt[vector];
+
+    g->offset_low    = (af_u16)(addr & 0xFFFF);
+    g->selector      = AF_GDT_KERNEL_CODE;
+    g->ist           = 0;
+    g->type_attr     = IDT_GATE_INTERRUPT_64;
+    g->offset_middle = (af_u16)((addr >> 16) & 0xFFFF);
+    g->offset_high   = (af_u32)((addr >> 32) & 0xFFFFFFFF);
+    g->reserved      = 0;
+}
+
+// -----------------------------------------------------------------------------
+// PIC remapping
+//
+// At reset the 8259 PICs deliver IRQ0..7 as vectors 0x08..0x0F and IRQ8..15 as
+// 0x70..0x77 — which collide head-on with the CPU exception vectors. Without
+// this remap, a timer tick is delivered as a double fault.
+// -----------------------------------------------------------------------------
+#define PIC1_COMMAND 0x20
+#define PIC1_DATA    0x21
+#define PIC2_COMMAND 0xA0
+#define PIC2_DATA    0xA1
+#define PIC_EOI      0x20
+
+#define AF_IRQ_BASE  0x20
+#define AF_IRQ_COUNT_PIC 16
+
+static void pic_remap(void)
+{
+    af_u8 mask1 = af_inb(PIC1_DATA);
+    af_u8 mask2 = af_inb(PIC2_DATA);
+
+    af_outb(PIC1_COMMAND, 0x11);   // ICW1: begin initialisation, expect ICW4
+    af_io_wait();
+    af_outb(PIC2_COMMAND, 0x11);
+    af_io_wait();
+
+    af_outb(PIC1_DATA, AF_IRQ_BASE);        // ICW2: master vector offset
+    af_io_wait();
+    af_outb(PIC2_DATA, AF_IRQ_BASE + 8);    // ICW2: slave vector offset
+    af_io_wait();
+
+    af_outb(PIC1_DATA, 0x04);      // ICW3: slave is on master IRQ2
+    af_io_wait();
+    af_outb(PIC2_DATA, 0x02);      // ICW3: slave's cascade identity
+    af_io_wait();
+
+    af_outb(PIC1_DATA, 0x01);      // ICW4: 8086/88 mode
+    af_io_wait();
+    af_outb(PIC2_DATA, 0x01);
+    af_io_wait();
+
+    // Restore the masks, but mask everything for now: v0.1 has no interrupt
+    // handlers installed, and an unexpected IRQ would arrive as a spurious
+    // vector with nothing to service it.
+    af_outb(PIC1_DATA, mask1 | 0xFF);
+    af_outb(PIC2_DATA, mask2 | 0xFF);
+}
+
+// -----------------------------------------------------------------------------
+// Names and decoding
+// -----------------------------------------------------------------------------
+static const char *const s_exception_names[32] = {
+    "#DE divide error",
+    "#DB debug",
+    "NMI non-maskable interrupt",
+    "#BP breakpoint",
+    "#OF overflow",
+    "#BR bound range exceeded",
+    "#UD invalid opcode",
+    "#NM device not available",
+    "#DF double fault",
+    "coprocessor segment overrun",
+    "#TS invalid TSS",
+    "#NP segment not present",
+    "#SS stack-segment fault",
+    "#GP general protection fault",
+    "#PF page fault",
+    "reserved (15)",
+    "#MF x87 floating-point exception",
+    "#AC alignment check",
+    "#MC machine check",
+    "#XM SIMD floating-point exception",
+    "#VE virtualisation exception",
+    "#CP control protection exception",
+    "reserved (22)",
+    "reserved (23)",
+    "reserved (24)",
+    "reserved (25)",
+    "reserved (26)",
+    "reserved (27)",
+    "hypervisor injection exception",
+    "VMM communication exception",
+    "#SX security exception",
+    "reserved (31)",
+};
+
+const char *af_x86_exception_name(af_u64 vector)
+{
+    if (vector < 32) {
+        return s_exception_names[vector];
+    }
+    if (vector >= AF_IRQ_BASE && vector < AF_IRQ_BASE + AF_IRQ_COUNT_PIC) {
+        return "hardware IRQ";
+    }
+    return "spurious or unassigned vector";
+}
+
+void af_x86_describe_page_fault(af_u64 error_code, char *out, af_size out_size)
+{
+    if (out == NULL || out_size == 0) {
+        return;
+    }
+
+    // Bit 0 present, bit 1 write, bit 2 user, bit 3 reserved-bit violation,
+    // bit 4 instruction fetch, bit 5 protection key, bit 6 shadow stack.
+    af_snprintf(out, out_size,
+                "%s %s access in %s, %s",
+                (error_code & 0x1) ? "protection violation" : "page not present",
+                (error_code & 0x2) ? "write" : "read",
+                (error_code & 0x4) ? "user mode" : "kernel mode",
+                (error_code & 0x10) ? "instruction fetch"
+                                    : ((error_code & 0x8) ? "reserved bit set"
+                                                          : "data access"));
+}
+
+bool isr_frame_from_user(const isr_frame_t *frame)
+{
+    return frame != NULL && (frame->cs & 0x3u) == 0x3u;
+}
+
+// -----------------------------------------------------------------------------
+// Initialisation
+// -----------------------------------------------------------------------------
+af_status_t af_x86_idt_init(void)
+{
+    af_memset(s_idt, 0, sizeof(s_idt));
+
+    for (af_u32 v = 0; v < 48; v++) {
+        set_gate(v, s_stub_table[v]);
+    }
+
+    // Vectors 48..255 keep a zero descriptor. If one is ever raised the CPU
+    // takes #GP with a clear vector number rather than jumping to address zero.
+    for (af_u32 v = 48; v < 256; v++) {
+        af_idt_entry_t *g = &s_idt[v];
+        g->selector      = AF_GDT_KERNEL_CODE;
+        g->type_attr     = IDT_GATE_INTERRUPT_64;
+        g->offset_low    = 0;
+        g->offset_middle = 0;
+        g->offset_high   = 0;
+    }
+
+    s_idt_pointer.limit = (af_u16)(sizeof(s_idt) - 1);
+    s_idt_pointer.base  = (af_u64)(af_uptr)&s_idt[0];
+
+    pic_remap();
+
+    __asm__ __volatile__("lidt %0" :: "m"(s_idt_pointer));
+
+    af_info("idt", "IDT installed: 256 vectors, %u exception/IRQ stubs, PIC at 0x20",
+            48u);
+
+    return AF_OK;
+}
+
+// -----------------------------------------------------------------------------
+// Dispatch
+// -----------------------------------------------------------------------------
+//
+// Runs on the interrupt stack with interrupts disabled (interrupt gate). It must
+// therefore be short and must never block — and in v0.1 it either handles a
+// spurious IRQ or panics, so it is trivially short.
+void isr_dispatch(isr_frame_t *frame)
+{
+    if (frame == NULL) {
+        af_panic("isr_dispatch called with a NULL frame");
+    }
+
+    af_u64 vector = frame->vector;
+
+    // --- hardware IRQs (32..47) ---------------------------------------------
+    if (vector >= AF_IRQ_BASE && vector < AF_IRQ_BASE + AF_IRQ_COUNT_PIC) {
+        af_u32 irq = (af_u32)(vector - AF_IRQ_BASE);
+
+        // v0.1 masks every line, so reaching here means something enabled one.
+        af_warn("irq", "unexpected IRQ%u on vector 0x%X (masked; not serviced)",
+                irq, (af_u32)vector);
+
+        // Send End-Of-Interrupt so the PIC does not wedge, including to the
+        // slave PIC for IRQ8..15 (which arrive through the master's IRQ2).
+        if (irq >= 8) {
+            af_outb(PIC2_COMMAND, PIC_EOI);
+        }
+        af_outb(PIC1_COMMAND, PIC_EOI);
+        return;
+    }
+
+    // --- reserved / spurious vectors ----------------------------------------
+    if (vector >= 32) {
+        af_error("irq", "spurious interrupt on vector 0x%X (%s) — ignored",
+                 (af_u32)vector, af_x86_exception_name(vector));
+        return;
+    }
+
+    // --- CPU exception: this is always fatal in v0.1 ------------------------
+    //
+    // v0.4 adds recovery: a #PF from user mode becomes a demand-paging or
+    // copy-on-write event rather than a panic.
+    af_log_raw("\n");
+    af_log_raw("EXCEPTION: ");
+    af_log_raw(af_x86_exception_name(vector));
+    af_log_raw("\n");
+
+    if (vector == 14) {
+        af_u64 cr2 = af_read_cr2();
+        char   description[160];
+
+        af_x86_describe_page_fault(frame->error_code, description,
+                                   sizeof(description));
+
+        af_log_raw("  faulting address (CR2): ");
+        {
+            char addr[24];
+            af_format_hex(cr2, true, true, addr, sizeof(addr));
+            af_log_raw(addr);
+            af_log_raw("\n");
+        }
+        af_log_raw("  cause: ");
+        af_log_raw(description);
+        af_log_raw("\n");
+    }
+
+    af_log_raw("  error code: ");
+    {
+        char code[24];
+        af_format_hex(frame->error_code, true, true, code, sizeof(code));
+        af_log_raw(code);
+        af_log_raw("\n");
+    }
+
+    af_log_raw("  from      : ");
+    af_log_raw(isr_frame_from_user(frame) ? "user mode (CPL 3)" : "kernel mode (CPL 0)");
+    af_log_raw("\n");
+
+    // The frame pointer is passed to the panic report so af_arch_panic_dump()
+    // can print every register and a stack trace.
+    extern void af_x86_set_fault_frame(const isr_frame_t *frame);
+    af_x86_set_fault_frame(frame);
+
+    af_panic("unhandled CPU exception %s (vector %u)",
+             af_x86_exception_name(vector), (af_u32)vector);
+}

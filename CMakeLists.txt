@@ -16,7 +16,7 @@ cmake_minimum_required(VERSION 3.28)
 project(AfriyieOS
     VERSION 0.1.0
     DESCRIPTION "AfriyieOS - a minimal microkernel OS for PCs and phones"
-    LANGUAGES C CXX ASM)
+    LANGUAGES C CXX ASM ASM_NASM)
 
 # -----------------------------------------------------------------------------
 # Target architecture selection

@@ -30,12 +30,21 @@ find_program(AF_LINKER       NAMES ${AF_TRIPLE}-ld
              HINTS "${CROSS_PREFIX}/bin" NO_DEFAULT_PATH)
 find_program(AF_AS           NAMES ${AF_TRIPLE}-as
              HINTS "${CROSS_PREFIX}/bin" NO_DEFAULT_PATH)
+find_program(AF_OBJCOPY      NAMES ${AF_TRIPLE}-objcopy
+             HINTS "${CROSS_PREFIX}/bin" NO_DEFAULT_PATH)
+find_program(AF_SIZE         NAMES ${AF_TRIPLE}-size
+             HINTS "${CROSS_PREFIX}/bin" NO_DEFAULT_PATH)
+find_program(AF_NASM         NAMES nasm)
 
 if(NOT AF_C_COMPILER)
     message(FATAL_ERROR
         "aarch64-elf-gcc not found under '${CROSS_PREFIX}/bin'.\n"
         "Run ./tools/build_toolchain.sh first, or pass -DCROSS_PREFIX=/path/to/cross")
 endif()
+
+# arm64_elf is not a NASM target and none is required: the ARM64 layer uses GNU
+# as via the C compiler driver (blueprint section 4.1).
+set(AF_NASM "")
 
 set(CMAKE_C_COMPILER   "${AF_C_COMPILER}")
 set(CMAKE_CXX_COMPILER "${AF_CXX_COMPILER}" CACHE FILEPATH "" FORCE)

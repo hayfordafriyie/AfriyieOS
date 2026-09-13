@@ -31,6 +31,14 @@ find_program(AF_LINKER       NAMES ${AF_TRIPLE}-ld
              HINTS "${CROSS_PREFIX}/bin" NO_DEFAULT_PATH)
 find_program(AF_AS           NAMES ${AF_TRIPLE}-as
              HINTS "${CROSS_PREFIX}/bin" NO_DEFAULT_PATH)
+find_program(AF_OBJCOPY      NAMES ${AF_TRIPLE}-objcopy
+             HINTS "${CROSS_PREFIX}/bin" NO_DEFAULT_PATH)
+find_program(AF_SIZE         NAMES ${AF_TRIPLE}-size
+             HINTS "${CROSS_PREFIX}/bin" NO_DEFAULT_PATH)
+
+# NASM is a host tool: it targets x86_64 by itself, so it is not part of the
+# cross toolchain and comes from the system.
+find_program(AF_NASM NAMES nasm)
 
 if(NOT AF_C_COMPILER)
     message(FATAL_ERROR
@@ -38,9 +46,18 @@ if(NOT AF_C_COMPILER)
         "Run ./tools/build_toolchain.sh first, or pass -DCROSS_PREFIX=/path/to/cross")
 endif()
 
+if(NOT AF_NASM)
+    message(FATAL_ERROR
+        "nasm not found on PATH. Install it (apt install nasm) — the x86_64 "
+        "entry, ISR stubs and GDT loader are written in NASM.")
+endif()
+
 set(CMAKE_C_COMPILER   "${AF_C_COMPILER}")
 set(CMAKE_CXX_COMPILER "${AF_CXX_COMPILER}" CACHE FILEPATH "" FORCE)
 set(CMAKE_ASM_COMPILER "${AF_C_COMPILER}")
+set(CMAKE_ASM_NASM_COMPILER "${AF_NASM}" CACHE FILEPATH "" FORCE)
+set(CMAKE_OBJCOPY      "${AF_OBJCOPY}"     CACHE FILEPATH "" FORCE)
+set(CMAKE_SIZE         "${AF_SIZE}"        CACHE FILEPATH "" FORCE)
 set(CMAKE_LINKER       "${AF_LINKER}")
 
 # Bare metal: no host headers, no host libraries, no implicit executables.
