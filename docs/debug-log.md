@@ -21,6 +21,80 @@ Lesson:     the generalisable part
 
 ---
 
+## 2026 — Entries from real-package verification
+
+### Every fixture passed. A real package disproved the format.
+
+**Milestone:** v0.9b
+**Symptom:** the first real Alpine package ever fed to the reader reported 11
+entries where `tar` reported 13. Two files were missing, and the reason was not
+obvious because the two that vanished were `.SIGN.RSA...` and `.PKGINFO` —
+metadata, which a reader *should* exclude.
+**Cause:** the reader treated each gzip member as its own tar archive and
+reported the entries of the last one. The generated fixture was built the same
+way — a control tar, then a data tar, each complete — so the fixture agreed with
+the code and both were wrong about the format.
+
+A real `.apk` is **one tar split across gzip members at arbitrary offsets**,
+including mid-entry. The members are a streaming split so that a signature can be
+verified before the payload is read; they are not separate archives.
+**Fix:** every member is inflated into consecutive space in the scratch buffer
+and the result is walked as a single tar. The fixture was rebuilt to split one tar
+at offsets 700 and 1500 — inside an entry's header, and inside file data — which
+is a boundary no implementation gets right by accident.
+**Found by:** pointing the reader at a package from `dl-cdn.alpinelinux.org`,
+which took about two minutes and found in one run what weeks of green fixtures
+could not.
+**Lesson:** a fixture written by the same person, in the same hour, from the same
+understanding as the code, tests the understanding rather than the format. It is
+not a wasted artefact — it guards against regressions in what we *do* know — but
+it cannot tell us we are wrong. Only an artefact from outside can do that, and the
+cheapest one is a real file from the real source.
+
+---
+
+### Metadata is whatever starts with a dot, not the two things we knew about
+
+**Milestone:** v0.9b
+**Symptom:** after the split-tar fix, four of five real packages read cleanly and
+busybox reported **10 files where it should have had 7**.
+**Cause:** the reader excluded exactly `.PKGINFO` and `.SIGN.*` from the install
+list — the two kinds of metadata it knew about. busybox-1.36.1-r31.apk carries
+three more:
+
+```
+.SIGN.RSA.alpine-devel@lists.alpinelinux.org-6165ee59.rsa.pub
+.PKGINFO
+.post-install
+.post-upgrade
+.trigger
+```
+
+They are Alpine's **install scripts**, and all three were offered as files to
+install. That is wrong twice over: they would be written into the user's root
+directory as files called `.post-install`, and the scripts' actual purpose — which
+is to configure the package after installation — would never happen.
+**Fix:** the rule is structural. An entry at the archive ROOT whose name begins
+with `.` is control metadata, whatever it is called. The "no directory separator"
+part of the test keeps `usr/share/.hidden-config` as payload, and the fixture now
+carries one specifically so the exclusion cannot be quietly widened.
+**Found by:** the verification tool reporting a nonzero metadata count rather
+than a pass/fail, so the leak was visible as a number rather than hidden behind a
+green tick.
+**Lesson:** naming the special cases you know about guarantees being wrong about
+the next one. The version of this rule that was implemented enumerated two kinds
+of metadata; the version that works states the shape. When a rule can be written
+structurally, writing it enumeratively is a promise to be wrong later — and the
+later is always sooner than expected.
+
+**AND THE GAP THIS EXPOSED, named rather than implied:** the install scripts are
+now correctly excluded from the file list, but nothing *returns* them. An
+installer needs `.post-install` to configure a package, so the file list being
+right is not the same as the package being installable. That is a known hole,
+recorded in `afpkg.c` beside the function that creates it.
+
+---
+
 ## 2026 — Entries from the Alpine work
 
 ### The trailer was eight bytes before the end of the wrong thing

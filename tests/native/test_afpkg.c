@@ -621,12 +621,18 @@ static void test_apk(const char *dir)
                   "a dependency containing a colon survives intact");
     }
 
-    // --- the concatenated members --------------------------------------------
+    // --- ONE tar, split across members ---------------------------------------
     //
-    // THE TEST THIS FORMAT EXISTS FOR. The data tar is the LAST gzip member, and
-    // a reader that inflates one member and stops gets the control tar — which
-    // holds .PKGINFO and no payload. It would read the metadata correctly and
-    // install nothing, which is the most misleading kind of wrong.
+    // THE TEST THIS FORMAT EXISTS FOR, and the one the first fixture failed to
+    // be. A real Alpine package is one tar cut into gzip members at arbitrary
+    // offsets — including mid-entry — so that a signature can be verified before
+    // the payload is read. A reader that treats each member as its own archive
+    // sees only the entries in the LAST one.
+    //
+    // This fixture splits at offset 700 (inside an entry's header) and 1500
+    // (inside file data). An implementation cannot get those boundaries right by
+    // accident: the first cut leaves a partial header at the end of a member,
+    // and the second leaves arbitrary bytes with no structure at all.
     afpkg_iter_t it;
     afpkg_iter_begin(&it);
 
@@ -634,7 +640,8 @@ static void test_apk(const char *dir)
     int files = 0;
     int dirs = 0;
     int saw_binary = 0;
-    int saw_pkginfo = 0;
+    int saw_library = 0;
+    int saw_metadata = 0;
 
     while (afpkg_iter_next(&pkg, &it, &entry)) {
         if (entry.is_directory) {
@@ -645,18 +652,33 @@ static void test_apk(const char *dir)
         if (strcmp(entry.path, "usr/bin/afriyie-test") == 0) {
             saw_binary = 1;
         }
-        if (strcmp(entry.path, ".PKGINFO") == 0) {
-            // .PKGINFO is in the CONTROL member. Finding it in the file list
-            // means the reader walked the wrong member.
-            saw_pkginfo = 1;
+        if (strcmp(entry.path, "lib/libafriyie.so.1") == 0) {
+            saw_library = 1;
+        }
+        // ANY dot-name at the archive root is apk metadata. A real busybox
+        // package carries .post-install, .post-upgrade and .trigger; naming
+        // the ones we happen to know guarantees being wrong the next time
+        // Alpine adds one.
+        if (entry.path[0] == '.' && strchr(entry.path, '/') == NULL) {
+            saw_metadata = 1;
         }
     }
 
-    check(saw_binary == 1, "the payload from the LAST gzip member was reached");
-    check(saw_pkginfo == 0,
-          "and the control member's .PKGINFO is NOT in the file list");
-    check(files == 2, "two regular files in the data member");
-    check(dirs == 3, "three directories in the data member");
+    // TWO payload files, not three. The tar holds five files and two of them
+    // are the metadata entries that must not be offered for installation. The
+    // first version of this line said three, which was a miscount of my own
+    // fixture — and the assertion failing is how it was found.
+    // THREE payload files: the fixture also carries usr/share/.hidden-config, a
+    // dot-name INSIDE a directory. That is payload, not metadata, and it exists
+    // to fail loudly if the exclusion is ever widened to "any name beginning
+    // with a dot".
+    check(files == 3, "three payload files across the whole split tar");
+    check(dirs == 3, "three directories across the whole split tar");
+    check(saw_binary == 1, "the payload file was reached despite the split");
+    check(saw_library == 1, "and the last payload file, after the second cut");
+    check(saw_metadata == 0,
+          ".PKGINFO and .SIGN are NOT offered as files to install — they are "
+          "metadata that happens to live in the same tar");
 
     unload();
 

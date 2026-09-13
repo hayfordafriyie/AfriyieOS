@@ -818,23 +818,49 @@ static af_status_t read_apk(const af_u8 *data, af_size len,
     af_pkg_info_t info;
     afpkg_memset(&info, 0, sizeof(info));
 
+    // EVERY MEMBER IS PART OF ONE TAR, and this is where the first version of
+    // this reader was wrong in a way no generated fixture could show.
+    //
+    // The reader treated each gzip member as its own tar and reported the
+    // entries of the last one. That works when each member happens to hold a
+    // whole archive, which is what the fixture did — the fixture was written
+    // from the same misunderstanding, so it agreed with the code and both were
+    // wrong.
+    //
+    // A real .apk from Alpine's CDN is ONE tar split across members at arbitrary
+    // boundaries, including mid-entry, so that a signature can be checked before
+    // the payload is read. The visible symptom was 11 entries reported instead
+    // of 13. The dangerous version of the same bug is a package whose payload
+    // straddles a boundary: the reader reports a partial file list and installs
+    // a program with files missing.
+    //
+    // So the members are inflated one after another into consecutive space in
+    // the scratch buffer, and the result is walked as a single tar.
     af_size offset = 0;
-    af_size data_len = 0;
+    af_size total = 0;
     af_size members = 0;
-    bool found_pkginfo = false;
     const char *why = "";
 
     while (offset < len) {
+        if (total >= scratch->size) {
+            out->error = "the package's decompressed contents do not fit the "
+                         "scratch buffer";
+            return AF_ERR_TOOMANY;
+        }
+
+        afpkg_scratch_t sub;
+        sub.base = scratch->base + total;
+        sub.size = scratch->size - total;
+
         af_size out_len = 0;
         af_size consumed = 0;
 
         const af_status_t rc = afpkg_gunzip_member(data + offset, len - offset,
-                                                   *scratch, &out_len, &consumed,
-                                                   &why);
+                                                   sub, &out_len, &consumed, &why);
         if (af_status_err(rc)) {
-            // A truncated final member is common enough to be worth naming:
-            // an interrupted download produces exactly this, and "corrupt"
-            // alone sends the reader looking for a parsing bug.
+            // A truncated final member is common enough to be worth naming: an
+            // interrupted download produces exactly this, and "corrupt" alone
+            // sends the reader looking for a parsing bug.
             out->error = (offset > 0)
                 ? "the package ends inside a gzip member — it is truncated"
                 : why;
@@ -842,57 +868,56 @@ static af_status_t read_apk(const af_u8 *data, af_size len,
         }
 
         members++;
-
-        // Look for .PKGINFO in THIS member, before the next one overwrites the
-        // buffer. The control member is the one that has it and it is not always
-        // first: a signed .apk puts the signature tar ahead of it.
-        if (!found_pkginfo) {
-            af_size cursor = 0;
-            af_pkg_entry_t entry;
-            const af_u8 *contents = NULL;
-            af_size contents_len = 0;
-
-            while (true) {
-                const af_status_t walked =
-                    afpkg_tar_next(scratch->base, out_len, &cursor, &entry,
-                                   &contents, &contents_len, &why);
-                if (walked == AF_ERR_AGAIN) {
-                    continue;
-                }
-                if (af_status_err(walked)) {
-                    break;
-                }
-
-                if (afpkg_strcmp(entry.path, ".PKGINFO") == 0) {
-                    if (contents_len > APK_PKGINFO_MAX) {
-                        out->error = ".PKGINFO is implausibly large";
-                        return AF_ERR_FS_CORRUPT;
-                    }
-                    afpkg_parse_pkginfo((const char *)contents, contents_len, &info);
-                    found_pkginfo = true;
-                    break;
-                }
-            }
-        }
-
-        // The last member seen so far is the data tar. After the loop it is the
-        // one still in the buffer, because each member is inflated over the
-        // previous — which is also why nothing may hold a pointer into an
-        // earlier member.
-        data_len = out_len;
-
-        offset += consumed;
+        total += out_len;
 
         if (consumed == 0) {
             out->error = "a gzip member consumed no input — malformed stream";
             return AF_ERR_FS_CORRUPT;
         }
+
+        offset += consumed;
     }
 
-    if (!found_pkginfo) {
-        out->error = "no .PKGINFO in any gzip member — this is a gzipped tar, "
-                     "but it is not an Alpine package";
-        return AF_ERR_INVAL;
+    if (total == 0) {
+        out->error = "the package decompressed to nothing";
+        return AF_ERR_FS_CORRUPT;
+    }
+
+    // --- .PKGINFO, from anywhere in the one tar -------------------------------
+    {
+        af_size cursor = 0;
+        af_pkg_entry_t entry;
+        const af_u8 *contents = NULL;
+        af_size contents_len = 0;
+        bool found = false;
+
+        while (true) {
+            const af_status_t walked =
+                afpkg_tar_next(scratch->base, total, &cursor, &entry,
+                               &contents, &contents_len, &why);
+            if (walked == AF_ERR_AGAIN) {
+                continue;
+            }
+            if (af_status_err(walked)) {
+                break;
+            }
+
+            if (afpkg_strcmp(entry.path, ".PKGINFO") == 0) {
+                if (contents_len > APK_PKGINFO_MAX) {
+                    out->error = ".PKGINFO is implausibly large";
+                    return AF_ERR_FS_CORRUPT;
+                }
+                afpkg_parse_pkginfo((const char *)contents, contents_len, &info);
+                found = true;
+                break;
+            }
+        }
+
+        if (!found) {
+            out->error = "no .PKGINFO in the archive — this is a gzipped tar, "
+                         "but it is not an Alpine package";
+            return AF_ERR_INVAL;
+        }
     }
 
     if (info.name[0] == '\0' || info.version[0] == '\0') {
@@ -900,10 +925,10 @@ static af_status_t read_apk(const af_u8 *data, af_size len,
         return AF_ERR_FS_CORRUPT;
     }
 
-    out->info       = info;
+    out->info         = info;
     out->data_tar     = scratch->base;
-    out->data_tar_len = data_len;
-    out->format     = AF_BINFMT_APK_PKG;
+    out->data_tar_len = total;
+    out->format       = AF_BINFMT_APK_PKG;
 
     (void)members;
     return AF_OK;
@@ -1099,6 +1124,45 @@ void afpkg_iter_begin(afpkg_iter_t *it)
     it->cursor = 0;
 }
 
+// True for the entries at the root of an Alpine archive that describe the
+// package rather than being part of it.
+//
+// THE RULE IS "A DOT-NAME AT THE ROOT", and it was learned from a real package.
+// The first version excluded exactly .PKGINFO and .SIGN.*, naming the two kinds
+// it knew about. busybox-1.36.1-r31.apk then arrived carrying .post-install,
+// .post-upgrade and .trigger — Alpine's install scripts — and all three were
+// offered as files to install. That is wrong twice: they would be written into
+// the root directory as files called ".post-install", and the scripts' actual
+// purpose would never happen.
+//
+// Naming the special cases guarantees being wrong the next time one is added.
+// The structural rule — dot-name, no directory separator — covers .PKGINFO,
+// every .SIGN.* algorithm, all four script names and .trigger, and whatever
+// Alpine introduces next.
+//
+// A package may legitimately ship something like usr/share/.hidden; the "no
+// separator" test is what keeps that as payload.
+//
+// NOT YET EXPOSED: the install scripts are recognised and skipped, but nothing
+// returns them to a caller yet. An installer needs them — .post-install is how a
+// package configures itself — so this is a known gap, not a design choice. It is
+// named here because "the file list is right" is not the same as "the package
+// can be installed".
+static bool apk_metadata_entry(const char *path)
+{
+    if (path[0] != '.') {
+        return false;
+    }
+
+    for (af_size i = 1; path[i] != '\0'; i++) {
+        if (path[i] == '/') {
+            return false;      // not at the root: ordinary payload
+        }
+    }
+
+    return true;
+}
+
 bool afpkg_iter_next(const af_pkg_t *pkg, afpkg_iter_t *it, af_pkg_entry_t *out)
 {
     if (pkg == NULL || !pkg->valid || pkg->data_tar == NULL || it == NULL) {
@@ -1120,6 +1184,11 @@ bool afpkg_iter_next(const af_pkg_t *pkg, afpkg_iter_t *it, af_pkg_entry_t *out)
         if (af_status_err(rc)) {
             return false;
         }
+
+        if (pkg->format == AF_BINFMT_APK_PKG && apk_metadata_entry(out->path)) {
+            continue;
+        }
+
         return true;
     }
 }

@@ -1,0 +1,47 @@
+libafpkg against real packages from Alpine's CDN
+===============================================
+
+Every fixture in build/fixtures is generated, and the generated ones are
+real containers — ar, gzip and tar all accept them. They are still OUR
+IDEA of what a package looks like, though, and a fixture written from a
+misunderstanding agrees with code written from the same misunderstanding.
+
+These are not ours. They were fetched from dl-cdn.alpinelinux.org and
+read by the same code path a package manager will use.
+
+Reproduce with: ./tools/realpackages.sh
+
+--- what the reader makes of each ---
+  === the reader against real Alpine packages ===
+    ok    busybox                  1.36.1-r31       x86_64      7 files  21 dirs  deps  1  leaked 0
+    ok    ca-certificates          20260413-r0      x86_64    150 files  16 dirs  deps  3  leaked 0
+    ok    musl                     1.2.5-r3         x86_64      1 files   1 dirs  deps  0  leaked 0
+    ok    ncurses-terminfo-base    6.4_p20240420-r2 noarch     39 files  13 dirs  deps  0  leaked 0
+    ok    zlib                     1.3.2-r0         x86_64      1 files   1 dirs  deps  1  leaked 0
+  
+    5 real package(s) read, none leaked metadata
+
+WHAT THIS CAUGHT, twice, within minutes of being run for the first time
+
+  1. A real .apk is ONE tar split across gzip members at ARBITRARY
+     offsets. It is not one archive per member. The reader treated each
+     member as its own tar and saw only the last one's entries — and the
+     generated fixture was built the same wrong way, so it agreed.
+     Visible symptom: 11 entries instead of 13. The dangerous version is
+     a payload file split across a boundary, which installs a program
+     with files missing.
+
+  2. Metadata is not just .PKGINFO and .SIGN. busybox-1.36.1-r31.apk
+     carries .post-install, .post-upgrade and .trigger — Alpine's install
+     scripts — and all three were offered as files to install. Wrong
+     twice over: they would be written into the user's root directory as
+     files named '.post-install', and the scripts' actual purpose would
+     never happen.
+
+     The rule is now structural — a dot-name at the archive root — rather
+     than a list of the special cases we happen to know about.
+
+KNOWN GAP, named rather than implied: the install scripts are correctly
+excluded from the file list but nothing RETURNS them yet. An installer
+needs .post-install to configure a package, so the file list being right
+is not the same as the package being installable.
