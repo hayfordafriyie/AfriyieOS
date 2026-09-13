@@ -862,6 +862,41 @@ Service protocols are defined as `label` namespaces in `docs/abi/`:
 | **v1.2** | *Dual* | Acceleration & polish | GPU blits, page flipping, animations, power management, OTA updates | both |
 | **v2.0** | *Horizon* | Networking & ecosystem | TCP/IP, app store/package manager, SDK docs, third-party apps | both |
 
+### 11.1 Universal application compatibility
+
+The goal is one system that installs and runs software built for other ones:
+Linux packages from every distribution, Windows `.exe`/`.dll`, Android `.apk`
+and `.aab`, macOS `.dmg`, and the portable/containerised formats.
+
+This is tracked as its own thread because it spans milestones rather than sitting
+in one. The full design, the three ADRs and — importantly — an honest statement
+of what will **not** work are in
+[docs/architecture/universal-compat.md](architecture/universal-compat.md).
+
+| Version | Deliverable | Verification | Status |
+| --- | --- | --- | --- |
+| **v0.6** | `binfmt` format detection; native ELF personality split from the kernel | 74 boot-time checks on synthetic headers; `AF_BINFMT_OK` asserted in the boot test | ✅ **done** |
+| **v0.7** | Exec server as a user-space service; personalities become IPC servers | An unrecognised file produces a clear "no personality" error, not a panic | — |
+| **v0.8** | Linux syscall translator | A real static `busybox` runs; its output is asserted | — |
+| **v0.9** | Package readers: deb, rpm, pacman, apk | Host tests parse real packages from each ecosystem | — |
+| **v1.0** | Installer, AFS versioned store, AppImage | Install a real package, reboot, run it | — |
+| **v1.3** | PE loader + Win32 API subset | A real Win32 console program runs | — |
+| **v1.4** | Android: DEX/ART + APK install | An APK with a native activity runs | — |
+| **v2.x** | Flatpak, Snap, MSI, container formats | — | — |
+
+**The ordering is the plan.** Linux first, because its ABI is documented, finite
+and stable, and because `musl` and `busybox` give a small dependency-free target
+to aim at — it unlocks the largest body of software for the least work. Windows
+second, because PE is simple and Win32 is not. Android third, because ART is a
+large runtime and the framework above it is larger. macOS not at all, for the
+reasons stated in the compatibility document.
+
+**What this file will not do is claim a format it cannot run.** The macOS row
+does not exist, `.aab` is handled as a bundle to be split rather than an app to
+be installed, and a format with no personality is still *detected* — because
+"we support `.exe`" is a claim nobody can check, and "we identify `.exe` and the
+Windows personality is not implemented yet" is one they can.
+
 ### 10.2 Version dependency graph
 
 ```
