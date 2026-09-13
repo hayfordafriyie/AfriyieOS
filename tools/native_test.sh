@@ -93,6 +93,7 @@ run_suite() {
 run_suite afpkg \
     libs/libafpkg/afpkg.c \
     libs/libafpkg/inflate.c \
+    libs/libafpkg/zstd_decode.c \
     tests/native/test_afpkg.c
 
 # -----------------------------------------------------------------------------

@@ -21,6 +21,71 @@ Lesson:     the generalisable part
 
 ---
 
+## 2026 — Entries from the Zstandard work
+
+### Two orderings in one byte, and neither is the one you assume
+
+**Milestone:** v0.10 (in progress — the decoder is not finished)
+**Symptom:** every Zstandard frame containing a COMPRESSED block was refused,
+while every frame containing only raw or RLE blocks decoded perfectly. 21 of 42
+vectors passed, and the failing 21 were exactly the compressible payloads.
+**Cause:** two independent ordering mistakes, found by two rounds of tracing.
+
+**1. The sequence symbol-compression modes byte is laid out from the BOTTOM:**
+
+```
+    bits 1-0  reserved, must be zero
+    bits 3-2  match length mode
+    bits 5-4  offset mode
+    bits 7-6  literal length mode
+```
+
+I had it top-down, so the literal-length mode was being read out of the reserved
+bits. The first symptom was a first block reporting *"a sequence table repeats a
+previous one, but there is none"* — a message that is completely true and points
+entirely at the wrong place.
+
+The reserved bits being at the BOTTOM is the opposite of every other field in
+this format, which is why the assumption that they live at the top went
+unexamined.
+
+**2. zstd's Huffman codes are NOT canonical in the usual order.**
+
+I built the literal table the way DEFLATE does — sort by code length ascending,
+assign increasing codes — which is what every description of Huffman teaches.
+zstd builds it from the WEIGHTS:
+
+```
+    weight w  ->  code length (tableLog + 1 - w)
+                  occupying 2^(w-1) consecutive entries of a 2^tableLog table
+
+    offsets accumulate for w = 1, 2, 3, ...
+```
+
+So the LONGEST codes get the LOWEST table indices. For code lengths (2, 2, 1)
+that gives codes `00`, `01` and `1` — where canonical Huffman gives `10`, `11`
+and `0`. Both are prefix-free and both work; only one is what the encoder writes.
+
+Found by tracing the literals section, which was failing with "Huffman literal
+decoding failed" — a message that came BEFORE the sequences errors that had been
+masking it.
+**Found by:** tracing, after eight combinations of sequence read orderings all
+failed *identically*. That uniformity was the useful signal: it ruled the
+orderings out and said the failure was upstream of them, which pointed at the
+literals.
+**Lesson, and it is the same one three times in this file now:** a format's
+ordering conventions are its definition, and a decoder that is right about
+everything except one of them produces plausible output or a confident error
+message naming the wrong component. The trace is what converts "this is wrong"
+into "this field is wrong", and guessing between plausible orderings costs a
+round each time.
+**Still open:** at least one more bug in the compressed-block path. The decoder
+is committed INCOMPLETE and UNWIRED — see the status header in
+`libs/libafpkg/zstd_decode.c`. Everything it does get right is listed there, and
+it is in no test, so a green run still means what it says.
+
+---
+
 ## 2026 — Entries from the package-metadata work
 
 ### Excluding the install scripts was necessary and not sufficient

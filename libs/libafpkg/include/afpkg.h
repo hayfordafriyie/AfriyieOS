@@ -253,6 +253,14 @@ af_status_t afpkg_gunzip_member(const af_u8 *data, af_size len,
                                 afpkg_scratch_t scratch, af_size *out_len,
                                 af_size *consumed, const char **why);
 
+// Zstandard (RFC 8878), for modern .deb, pacman's .pkg.tar.zst and Snap.
+//
+// NOT YET VERIFIED against the vectors — see tools/pkgsynth.py,
+// which writes zstd_*.raw and zstd_*.N.zst pairs.
+af_status_t afpkg_zstd(const af_u8 *data, af_size len,
+                       af_u8 *out_base, af_size out_size,
+                       af_size *out_len, const char **why);
+
 // The raw DEFLATE layer, exposed because it is independently testable and
 // because gzip is a wrapper around it rather than the thing itself. A bug in the
 // wrapper and a bug in the encoder should not be attributable to each other.
