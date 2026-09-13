@@ -30,6 +30,9 @@ set(AF_KERNEL_SOURCES
     core/pci.c
     core/block.c
     drivers/virtio_blk.c
+    # --- v0.3: file systems ---
+    fs/gpt.c
+    fs/fat32.c
 )
 
 # -----------------------------------------------------------------------------

@@ -696,9 +696,22 @@ def make_image(build_dir: str, output: str, arch: str, esp_size_mb: int) -> None
     # --- FAT32 ESP -----------------------------------------------------------
     volume = Fat32Volume(esp_sectors)
     volume.write_file(EFI_FALLBACK_PATH, boot_bytes)
+
+    # The v0.3 acceptance file.
+    #
+    # This is not filler. The kernel's FAT32 self test mounts this ESP and reads
+    # exactly this file, checking the contents rather than merely printing
+    # whatever comes back — so a file system reader that returns the wrong sector
+    # fails the test instead of appearing to work.
+    #
+    # The newline is part of the expected contents, so a reader that returns the
+    # right bytes with the wrong length fails as well.
+    volume.write_file("HELLO.TXT", b"Hello from disk\n")
+
     log(f"ESP: FAT32, {volume.cluster_count} clusters, "
         f"{volume.fat_sectors} sectors per FAT")
     log(f"     wrote {EFI_FALLBACK_PATH}")
+    log(f"     wrote HELLO.TXT ({len(b'Hello from disk\n')} bytes)")
 
     esp_image = volume.finalize()
     if len(esp_image) != esp_sectors * SECTOR_SIZE:

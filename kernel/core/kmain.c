@@ -38,6 +38,7 @@
 #include "afriyie/pci.h"
 #include "afriyie/block.h"
 #include "afriyie/virtio_blk.h"
+#include "afriyie/fs.h"
 
 // Defined at the bottom of this file. Declared here because kmain creates the
 // idle thread before the definition appears.
@@ -328,6 +329,10 @@ void kmain(af_boot_info_t *boot_info)
 
     // The v0.3 acceptance test: read sector 0 from a real disk.
     virtio_blk_selftest();
+
+    // ...then read a FILE from it: GPT -> FAT32 -> directory walk -> cluster
+    // chain -> contents, checked against the exact expected string.
+    fat32_selftest();
 
     // -------------------------------------------------------------------------
     // Idle
