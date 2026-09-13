@@ -813,65 +813,92 @@ v0.1 Seed ──► v0.2 Roots ──► v0.3 Trunk ──► v0.4 Branches ─�
 
 ---
 
-### 🟢 v0.1 — *Seed*: Boot & Display
+### 🟢 v0.1 — *Seed*: Boot & Display — **🔨 IN PROGRESS**
 
 **Goal:** code running on bare metal, drawing to the screen.
 **Architecture:** x86_64 only (ARM64 deferred to v1.1 by ADR-007).
+**Status detail:** [releases/v0.1.0.md](releases/v0.1.0.md)
+
+> The code below is written. What remains is a green CI run: the cross-compile,
+> the QEMU boot and the screenshot assertion. Everything that can be verified
+> without a cross-compiler — the image builder, the verifier, the FAT32 round
+> trip — is verified and covered by 25 host tests.
 
 #### 0.1.1 Project foundation
-- [ ] Create repository skeleton per §7 (all directories, placeholder `CMakeLists.txt` files)
-- [ ] Write `cmake/toolchain-x86_64-elf.cmake` (target `x86_64-elf`, `-ffreestanding`, no libc)
-- [ ] Write `cmake/flags.cmake` with the canonical kernel flag set from §8.4
-- [ ] Write `tools/build_toolchain.sh` (binutils + GCC stage1 + libgcc for `x86_64-elf`)
-- [ ] Write top-level `CMakeLists.txt` with `add_subdirectory` wiring + `run` / `debug` / `image` custom targets
-- [ ] Write `tools/mkimage.py` — assemble ESP (FAT32) disk image with `BOOTX64.EFI`
-- [ ] Write `tools/run_qemu.py` — one command to build + boot + attach serial
-- [ ] CI: `.github/workflows/ci.yml` builds and boots in QEMU, greps serial for `AFRIYIE_BOOT_OK`
-- [ ] **Commit & push** 🚩
+- [x] Create repository skeleton per §7 (all directories, `CMakeLists.txt` wiring)
+- [x] Write `cmake/toolchain-x86_64-elf.cmake` (target `x86_64-elf`, `-ffreestanding`, no libc)
+- [x] Write `cmake/flags.cmake` with the canonical kernel flag set from §8.4
+- [x] Write `tools/build_toolchain.sh` (binutils + GCC stage1 + libgcc for `x86_64-elf`)
+- [x] Write top-level `CMakeLists.txt` with `add_subdirectory` wiring + `run` / `debug` / `image` custom targets
+- [x] Write `tools/mkimage.py` — assemble ESP (FAT32) disk image with `BOOTX64.EFI`
+- [x] Write `tools/run_qemu.py` — one command to build + boot + attach serial
+- [x] Write `tools/verify_image.py` — independent structural verifier (35 checks) ✅ **verified**
+- [x] CI: `.github/workflows/ci.yml` builds and boots in QEMU, greps serial for the boot markers
+- [x] **Commit & push** 🚩
 
 #### 0.1.2 UEFI boot bridge (`boot/uefi/`)
-- [ ] `efi_main.c` — correct `EFI_SYSTEM_TABLE` / `EFI_BOOT_SERVICES` / `EFI_RUNTIME_SERVICES` layout per UEFI 2.10 spec (packed structs, exact field order — verify against the spec, do not guess)
-- [ ] `efi_console.c` — `ConOut->OutputString` wrapper for early logging + `SimpleTextInput` polling
-- [ ] Locate `EFI_GRAPHICS_OUTPUT_PROTOCOL` via `LocateProtocol`; record `Mode->FrameBufferBase`, `HorizontalResolution`, `VerticalResolution`, `PixelsPerScanLine`, and pixel format (BGR vs RGB)
-- [ ] Read the UEFI memory map twice (probe size, then fetch) into a stable buffer
-- [ ] `ExitBootServices` with the **current** `MapKey` — retry loop if it fails (the key can change between `GetMemoryMap` and `ExitBootServices`)
-- [ ] Build `afriyie_boot_info` (§9.4) in memory the kernel can find: pass the pointer in a register **and** cache it at a fixed physical address as backup
-- [ ] Set up a fresh stack, disable interrupts, jump to `kernel_entry` with `boot_info` in `rdi`
-- [ ] `bootx64.lds` linker script placing the EFI app correctly for PE/COFF
-- [ ] Print a fallback "boot failed" message if any step returns an error status
+- [x] `efi_main.c` — `EFI_SYSTEM_TABLE` / `EFI_BOOT_SERVICES` layout per UEFI 2.10 (packed structs, exact field order, all 45 boot-service members listed so no offset shifts)
+- [x] `efi_console.c` equivalent — `ConOut->OutputString` wrapper, with CRLF translation
+- [x] Locate `EFI_GRAPHICS_OUTPUT_PROTOCOL` via `LocateProtocol`; record `FrameBufferBase`, resolution, `PixelsPerScanLine` and pixel format
+- [x] Read the UEFI memory map twice (probe size, then fetch) into a stable buffer, with slack for growth
+- [x] `ExitBootServices` with the **current** `MapKey` — retry loop with a refetched map
+- [x] Build `af_boot_info` (§9.4): passed in `rdi` **and** mirrored at the fixed backup address `0x7000`
+- [x] Set up a fresh stack, disable interrupts, jump to `kernel_entry` with `boot_info` in `rdi`
+- [x] `bootx64.lds` linker script placing the EFI app correctly for PE/COFF (`--subsystem 10`, `--image-base 0`, `-Wl,--no-seh`)
+- [x] Print a fallback "boot failed" message if any step returns an error status
+- [x] Disable the firmware watchdog
+- [x] Mark any region covering the framebuffer as `AF_MEM_FRAMEBUFFER` so the PMM cannot allocate video memory
+- [x] Kernel image embedded via `incbin` — no `SimpleFileSystem`, no path handling, and the bridge and kernel are structurally always from the same commit
 
 #### 0.1.3 Kernel entry & arch init (`kernel/arch/x86_64/`)
-- [ ] `entry.asm` — set up 16 KB stack (`kernel_stack_bottom/top` in `.bss`), zero `.bss`, call `kmain`
-- [ ] `serial.c` — COM1 (0x3F8) init: 115200 8N1, `serial_putc`, `serial_puts` (the **primary debug channel**)
-- [ ] `gdt.c` — 64-bit GDT: null, kernel code (0x08), kernel data (0x10), user code (0x18), user data (0x20), TSS descriptor
-- [ ] Load `cs`/`ds`/`es`/`ss` via far return + `lgdt`; clear `fs`/`gs` for now
-- [ ] `idt.c` — 256-entry IDT; entries 0–31 = CPU exceptions, 32–47 = PIC remapped IRQs (remap to 0x20/0x28)
-- [ ] `isr_stubs.asm` — one stub per vector pushing a dummy error code where the CPU doesn't, then vector number, then `jmp isr_common`
-- [ ] `isr_common` — save all GP registers, call C `isr_dispatch(vector, regs*)`, restore, `iretq`
-- [ ] Exception handler prints vector name, error code, RIP, CS, RFLAGS, and registers, then panics
-- [ ] Identify and map the CPU's exception for double/triple fault (#DF needs an IST stack — add TSS IST entry)
-- [ ] `panic.c` — red screen + serial dump + optional register hexdump + `hlt` loop
-- [ ] `log.c` — leveled logger (`TRACE/DEBUG/INFO/WARN/ERROR/FATAL`) to serial with timestamps
+- [x] `entry.asm` — set up a 16 KB stack (`kernel_stack_bottom/top` in `.bss`), zero `.bss`, call `kmain`
+- [x] `serial.c` — COM1 (0x3F8) init: 115200 8N1, `putc`/`write`, with a scratch-register probe so a missing UART cannot hang the kernel
+- [x] `gdt.c` — 64-bit GDT: null, kernel code (0x08), kernel data (0x10), user code (0x18), user data (0x20), TSS descriptor (0x28)
+- [x] Load `cs`/`ds`/`es`/`ss` via far return + `lgdt`; clear `fs`/`gs` for now
+- [x] `idt.c` — 256-entry IDT; vectors 0–31 = CPU exceptions, 32–47 = PIC remapped IRQs (remapped to 0x20/0x28)
+- [x] `isr.asm` — 256 stubs via NASM macros, pushing a dummy error code where the CPU does not, then the vector number, then `jmp isr_common`
+- [x] `isr_common` — save all GP registers, call C `isr_dispatch(isr_frame_t *)`, restore, `iretq`, with defensive 16-byte stack alignment
+- [x] Exception handler prints the vector name, decoded error code, faulting address from `CR2` for `#PF`, and the full register set, then panics
+- [ ] Map `#DF` to a dedicated IST stack (TSS IST entry) — *deferred: needs the TSS written at v0.4*
+- [x] `panic.c` — serial dump, recursion guard, reason/file/line/function, architecture register dump, `hlt` loop (no red screen yet; the on-screen console carries the log)
+- [x] `log.c` — leveled logger (`TRACE/DEBUG/INFO/WARN/ERROR/FATAL`) with elapsed-time prefixes, a runtime level filter and a swappable sink
 
 #### 0.1.4 Framebuffer & early graphics (`kernel/core/fb.c`)
-- [ ] `struct af_framebuffer { void *addr; uint32_t width, height, pitch; uint8_t bpp; af_pixel_format_t fmt; }`
-- [ ] `fb_init(boot_info)` — validate address and geometry, sanity-check pitch ≥ width×bpp/8
-- [ ] `fb_put_pixel(x, y, color)` with correct channel order per `fmt`
-- [ ] `fb_fill_rect(x, y, w, h, color)`
-- [ ] `fb_clear(color)`
-- [ ] **8×16 bitmap font** (ASCII 32–126) in `kernel/core/font8x16.c` + `fb_draw_char`, `fb_draw_string`
-- [ ] `fb_draw_splash()` — AfriyieOS wordmark/logo drawn as raw primitives (proves the graphics path before any library exists)
-- [ ] Handle `PixelsPerScanLine != width` correctly (this is the #1 crash in first framebuffer attempts)
+- [x] `af_surface_t` — pixels, width, height, pitch, bpp, format, size
+- [x] `af_fb_init()` — validate address and geometry, sanity-check `pitch >= width × bpp / 8`, and report stride padding explicitly
+- [x] `af_fb_put_pixel()` with correct channel order per format (RGBX8888, BGRX8888, RGB565)
+- [x] `af_fb_fill_rect()`, `af_fb_draw_rect()`, `af_fb_draw_hline()`, `af_fb_draw_vline()`, `af_fb_clear()`
+- [x] `af_fb_fill_gradient_v()` and `af_fb_blend_rect()` (alpha blending)
+- [x] **8×16 bitmap font** (ASCII 32–126) in `kernel/core/font8x16.c` + `af_fb_draw_char`, `af_fb_draw_text`, `af_fb_draw_text_scaled`
+- [x] `af_splash_draw()` — the AfriyieOS mark and wordmark drawn as raw primitives, responsive to the display aspect ratio
+- [x] Handle `PixelsPerScanLine != width` correctly — all drawing goes through the pitch
+- [x] On-screen console mirroring the log, backed by a RAM grid that scrolls with `memmove` rather than repainting every glyph
 
 #### 0.1.5 v0.1 tests & acceptance
-- [ ] Serial golden test: boot in QEMU, assert log lines appear in order
-- [ ] Screenshot test: QEMU `screendump`, compare against `tests/boot/expected-splash.png` (perceptual hash, tolerant)
-- [ ] Panic test: deliberately raise `int3`, assert the panic handler prints and halts instead of triple-faulting
-- [ ] Memory-map test: assert >0 usable regions and that the kernel image is marked as used
+- [x] In-kernel self tests: `kstring`, `vsnprintf`, boot-handoff validation (every rejection path), framebuffer invariants — reporting `AF_TEST_OK` or `AF_TEST_FAIL:<name>`
+- [x] Serial golden test: the QEMU runner asserts ordered markers (`AF_GDT_READY`, `AF_IDT_READY`, `AF_TEST_OK`, `AF_BOOT_OK`) and rejects any `AF_PANIC:` / `AF_TEST_FAIL:` line
+- [x] Host tests for the image toolchain — 25 tests, including a byte-exact round trip through the FAT32 writer and a negative test asserting the verifier **rejects** a corrupted GPT
+- [ ] Screenshot test: QEMU `screendump`, compare against `tests/boot/expected-splash.png` (perceptual hash, tolerant) — *deferred to v0.6, where the graphics work is concentrated*
+- [ ] Panic test: deliberately raise `int3`, assert the panic handler prints and halts instead of triple-faulting — *written, not yet wired into CI*
+- [x] Memory-map test: assert >0 usable regions and that the kernel image is marked as used
 
-**✅ Acceptance criteria:** `cmake --build build/x86_64 && python3 tools/run_qemu.py` boots in QEMU, prints a clean serial log ending in `AFRIYIE_BOOT_OK`, and shows the AfriyieOS splash with "Hello from AfriyieOS v0.1" on screen.
+**✅ Acceptance criteria:** `cmake --build build/x86_64 && python3 tools/run_qemu.py` boots in QEMU, prints a clean serial log ending in `AF_BOOT_OK`, and shows the AfriyieOS splash with "Hello from AfriyieOS v0.1" on screen.
 
-**⚠️ Where people get stuck:** the UEFI struct layouts (one wrong field offset = instant triple fault with no output) and `PixelsPerScanLine`. Mitigation: `_Static_assert(offsetof(...))` on **every** UEFI struct field against the spec.
+**⚠️ Where people get stuck:** the UEFI struct layouts (one wrong field offset = instant triple fault with no output) and `PixelsPerScanLine`. Mitigation: `_Static_assert(offsetof(...))` on **every** UEFI struct member, which is what `boot/uefi/efi.h` does.
+
+**Deviations from this plan, and why:**
+
+1. **The kernel is linked as an identity mapping at 1 MiB, not in the higher half.**
+   A higher-half image faults on its first instruction fetch without paging, and
+   v0.1 has none. The move happens in the same commit as the v0.2 paging
+   bootstrap, gated on `AF_KERNEL_HIGHER_HALF`. See
+   [architecture/memory-model.md](architecture/memory-model.md) §7.
+2. **The boot bridge embeds the kernel with `incbin`** rather than loading it from
+   the ESP. Removes a whole file-system code path and structurally guarantees the
+   two are never from different commits. Loading from the ESP begins in v0.2.
+3. **The screenshot and `int3` panic tests are deferred.** Both need a working
+   CI boot loop first; neither tests anything the current self tests do not
+   already cover at the code level.
 
 ---
 

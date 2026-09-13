@@ -75,21 +75,39 @@ It contains the full architecture, language and framework choices, the kernel AB
 
 ## 🚦 Current status
 
-**v0.1 — Seed: in development.** No bootable image yet; the specification is complete and the source tree is being built out.
+**v0.1 — Seed: code complete, awaiting a green CI run.**
 
-## 🤝 Building (once v0.1 lands)
+The boot path exists end to end: firmware loads `BOOTX64.EFI`, the bridge
+describes the machine, the kernel initialises the CPU, brings up a framebuffer and
+draws a responsive splash screen.
+
+| | |
+| --- | --- |
+| ✅ **Verified** | Disk image builder and verifier — 35/35 structural checks, byte-exact FAT32 round trip |
+| ✅ **Verified** | 25 host tests over the image toolchain, including a negative test that the verifier rejects a corrupted image |
+| ⏳ **Pending CI** | Cross-compile with `-Werror`, QEMU boot to `AF_BOOT_OK`, screenshot |
+
+See [docs/releases/v0.1.0.md](docs/releases/v0.1.0.md) for the full evidence table.
+
+## 🚦 Building
 
 ```bash
-# 1. Build the cross-compilers (Linux / WSL2)
+# 1. Build the cross-compilers (Linux / WSL2) — once, ~30 minutes
 ./tools/build_toolchain.sh
 export PATH="$HOME/opt/cross/bin:$PATH"
 
 # 2. Configure and build
-cmake -B build/x86_64 -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-x86_64-elf.cmake
+cmake -B build/x86_64 -G Ninja \
+      -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-x86_64-elf.cmake \
+      -DAF_TARGET=x86_64
 cmake --build build/x86_64
 
 # 3. Boot it in QEMU
 python3 tools/run_qemu.py --arch x86_64 --image build/x86_64/afriyieos.img
+
+# 4. Or verify without booting (no cross-compiler needed)
+python3 tools/verify_image.py --image build/x86_64/afriyieos.img
+python3 -m unittest discover -s tests/host -v
 ```
 
 ## ⚠️ A note on scope
