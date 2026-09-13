@@ -21,6 +21,53 @@ Lesson:     the generalisable part
 
 ---
 
+## 2026 — Entries from the package-metadata work
+
+### Excluding the install scripts was necessary and not sufficient
+
+**Milestone:** v0.9c
+**Symptom:** none — this is the entry for a hole closed before it could be felt,
+recorded because of how it was found.
+**Cause:** the previous round fixed a real bug by excluding Alpine's dot-named
+metadata from the file list. `.post-install`, `.post-upgrade` and `.trigger` were
+no longer offered as files to install. That was right, and it left them reachable
+nowhere:
+
+> A package manager that installs busybox and never runs `.post-install` has
+> installed a package that does not work — and reports success.
+
+The fix had been recorded as incomplete in `afpkg.c` and in the evidence file at
+the time, with the gap named rather than implied. This is the closing of it.
+**Fix:** the scripts are collected during the same single walk of the tar that
+finds `.PKGINFO`, with their CONTENTS, and exposed through `af_pkg_info_t`. The
+test asserts the bytes rather than that a name was recorded — a reader that noted
+a script existed without keeping it would pass every structural check and be
+useless.
+
+Verified against the real packages: busybox reports
+`(post-install, post-upgrade, trigger)`, exactly what Python's `tarfile` sees in
+the same file, and ca-certificates reports two of its own. Three of the five
+carry none, which matters for a different reason — a reader that invented a
+script, or crashed without one, would be wrong there.
+**Found by:** writing the previous round's fix down as incomplete. The value of
+that note was not in this file; it was in the decision four days later being
+"close the named hole" rather than "what was I doing?".
+**Lesson:** when a fix removes something from a list, the question to ask
+immediately is where it went. Exclusion is a *move*, not a deletion, and the
+destination has to exist. The version of this that would have shipped would have
+looked completely correct: the file list right, no metadata leaked, every test
+green, and every package silently unconfigured.
+
+**STILL NOT DONE, named rather than implied:** the scripts are returned but
+nothing RUNS them. An install script is untrusted code from a third party, so
+executing one is a capability decision rather than a parsing one, and it needs
+the sandboxed-command machinery that arrives with the package manager. A library
+that returned script contents and executed them would be making that decision on
+the caller's behalf, which is exactly the kind of authority this system is built
+not to have.
+
+---
+
 ## 2026 — Entries from real-package verification
 
 ### Every fixture passed. A real package disproved the format.

@@ -92,6 +92,7 @@ cat > build/realprobe.c <<'EOF'
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <string.h>
 
 static unsigned char scratch[64 * 1024 * 1024];
 
@@ -130,9 +131,19 @@ int main(int argc, char **argv)
         if (e.path[0] == '.' && strchr(e.path, '/') == NULL) { leaked++; }
     }
 
-    printf("  ok    %-24s %-16s %-9s %3d files %3d dirs  deps %2u  leaked %d\n",
-           pkg.info.name, pkg.info.version, pkg.info.architecture,
-           files, dirs, pkg.info.depends_count, leaked);
+    printf("  ok    %-22s %-16s %3d files %3d dirs  deps %2u  leaked %d  scripts %u",
+           pkg.info.name, pkg.info.version,
+           files, dirs, pkg.info.depends_count, leaked, pkg.info.script_count);
+
+    /* Name them. A count of zero and a count of three are both plausible, and
+       only the names say whether the right three were found. */
+    for (af_u32 i = 0; i < pkg.info.script_count; i++) {
+        printf("%s%s", i == 0 ? " (" : ", ", afpkg_script_name(pkg.info.scripts[i].kind));
+    }
+    if (pkg.info.script_count > 0) {
+        printf(")");
+    }
+    printf("\n");
 
     free(buf);
     return leaked == 0 ? 0 : 1;

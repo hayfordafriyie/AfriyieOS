@@ -680,6 +680,56 @@ static void test_apk(const char *dir)
           ".PKGINFO and .SIGN are NOT offered as files to install — they are "
           "metadata that happens to live in the same tar");
 
+    // --- the install scripts -------------------------------------------------
+    //
+    // THE HOLE THIS CLOSES. Alpine ships .post-install and friends as dot-named
+    // files in the same tar as the payload. Excluding them from the file list is
+    // necessary and not sufficient: a package manager that installs busybox and
+    // never runs .post-install has installed a package that does not work.
+    //
+    // A real busybox package is what showed the scripts existed. This is what
+    // shows they are now reachable.
+    check(pkg.info.script_count == 2,
+          "the package's two install scripts were found");
+
+    int saw_post_install = 0;
+    int saw_trigger = 0;
+
+    for (af_u32 i = 0; i < pkg.info.script_count; i++) {
+        const af_pkg_script_t *s = &pkg.info.scripts[i];
+
+        check(s->data != NULL && s->len > 0, "a script has contents");
+
+        if (s->kind == AF_SCRIPT_POST_INSTALL) {
+            saw_post_install = 1;
+            // The contents, not merely the name. A reader that recorded that a
+            // script existed without keeping its bytes would pass every
+            // structural check and be useless.
+            check(s->len == strlen("#!/bin/sh\n# configure the package\n"),
+                  "post-install's length is right");
+            check(memcmp(s->data, "#!/bin/sh\n# configure",
+                         strlen("#!/bin/sh\n# configure")) == 0,
+                  "post-install's contents are the ones in the package");
+        }
+        if (s->kind == AF_SCRIPT_TRIGGER) {
+            saw_trigger = 1;
+        }
+    }
+
+    check(saw_post_install == 1, "post-install is identified as such");
+    check(saw_trigger == 1, "and so is the trigger");
+
+    // Every kind must be nameable, including one a switch forgets.
+    for (int k = 0; k <= (int)AF_SCRIPT_TRIGGER; k++) {
+        const char *name = afpkg_script_name((af_script_kind_t)k);
+        s_checks++;
+        if (name == NULL || name[0] == '\0' ||
+            (name[0] == '?' && name[1] == '\0')) {
+            s_failures++;
+            printf("  FAIL  script kind %d has no name\n", k);
+        }
+    }
+
     unload();
 
     // --- a corrupted package --------------------------------------------------

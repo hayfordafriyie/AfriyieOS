@@ -802,6 +802,64 @@ static void afpkg_parse_pkginfo(const char *text, af_size len, af_pkg_info_t *ou
     }
 }
 
+// True for the entries at the root of an Alpine archive that describe the
+// package rather than being part of it.
+//
+// THE RULE IS "A DOT-NAME AT THE ROOT", and it was learned from a real package.
+// The first version excluded exactly .PKGINFO and .SIGN.*, naming the two kinds
+// it knew about. busybox-1.36.1-r31.apk then arrived carrying .post-install,
+// .post-upgrade and .trigger — Alpine's install scripts — and all three were
+// offered as files to install. That is wrong twice: they would be written into
+// the root directory as files called ".post-install", and the scripts' actual
+// purpose would never happen.
+//
+// Naming the special cases guarantees being wrong the next time one is added.
+// The structural rule — dot-name, no directory separator — covers .PKGINFO,
+// every .SIGN.* algorithm, all four script names and .trigger, and whatever
+// Alpine introduces next.
+//
+// A package may legitimately ship something like usr/share/.hidden; the "no
+// separator" test is what keeps that as payload.
+//
+// NOT YET EXPOSED: the install scripts are recognised and skipped, but nothing
+// returns them to a caller yet. An installer needs them — .post-install is how a
+// package configures itself — so this is a known gap, not a design choice. It is
+// named here because "the file list is right" is not the same as "the package
+// can be installed".
+static bool apk_metadata_entry(const char *path)
+{
+    if (path[0] != '.') {
+        return false;
+    }
+
+    for (af_size i = 1; path[i] != '\0'; i++) {
+        if (path[i] == '/') {
+            return false;      // not at the root: ordinary payload
+        }
+    }
+
+    return true;
+}
+
+// The dot-named root entries that must be RUN, as opposed to merely read.
+//
+// Returning AF_SCRIPT_NONE for anything unrecognised is deliberate: Alpine's
+// rule for "is this metadata" is structural, but "is this a script, and when does
+// it run" is a closed list defined by apk-tools. An unknown dot-name is
+// therefore metadata that this build does not execute — which is worth knowing
+// and is why the count of skipped names is not silently zero.
+static af_script_kind_t apk_script_kind(const char *path)
+{
+    if (afpkg_strcmp(path, ".pre-install") == 0)    return AF_SCRIPT_PRE_INSTALL;
+    if (afpkg_strcmp(path, ".post-install") == 0)   return AF_SCRIPT_POST_INSTALL;
+    if (afpkg_strcmp(path, ".pre-upgrade") == 0)    return AF_SCRIPT_PRE_UPGRADE;
+    if (afpkg_strcmp(path, ".post-upgrade") == 0)   return AF_SCRIPT_POST_UPGRADE;
+    if (afpkg_strcmp(path, ".pre-deinstall") == 0)  return AF_SCRIPT_PRE_DEINSTALL;
+    if (afpkg_strcmp(path, ".post-deinstall") == 0) return AF_SCRIPT_POST_DEINSTALL;
+    if (afpkg_strcmp(path, ".trigger") == 0)        return AF_SCRIPT_TRIGGER;
+    return AF_SCRIPT_NONE;
+}
+
 static af_status_t read_apk(const af_u8 *data, af_size len,
                             const afpkg_scratch_t *scratch, af_pkg_t *out)
 {
@@ -883,13 +941,18 @@ static af_status_t read_apk(const af_u8 *data, af_size len,
         return AF_ERR_FS_CORRUPT;
     }
 
-    // --- .PKGINFO, from anywhere in the one tar -------------------------------
+    // --- one walk, for the metadata and the scripts ---------------------------
+    //
+    // ONE PASS, because the tar is a stream and walking it twice to collect two
+    // kinds of thing would double the cost for no benefit. It also cannot break
+    // early at .PKGINFO any more: the scripts come after it.
     {
         af_size cursor = 0;
         af_pkg_entry_t entry;
         const af_u8 *contents = NULL;
         af_size contents_len = 0;
         bool found = false;
+        af_u32 unknown_dot_names = 0;
 
         while (true) {
             const af_status_t walked =
@@ -909,7 +972,30 @@ static af_status_t read_apk(const af_u8 *data, af_size len,
                 }
                 afpkg_parse_pkginfo((const char *)contents, contents_len, &info);
                 found = true;
-                break;
+                continue;
+            }
+
+            if (apk_metadata_entry(entry.path)) {
+                const af_script_kind_t kind = apk_script_kind(entry.path);
+
+                if (kind == AF_SCRIPT_NONE) {
+                    // Metadata this build does not act on. Counted rather than
+                    // ignored, so "we ran everything" is a claim the reader can
+                    // support or not.
+                    unknown_dot_names++;
+                    continue;
+                }
+
+                if (info.script_count < AFPKG_MAX_SCRIPTS) {
+                    info.scripts[info.script_count].kind = kind;
+                    info.scripts[info.script_count].data = contents;
+                    info.scripts[info.script_count].len = contents_len;
+                    info.script_count++;
+                } else {
+                    out->error = "the package carries more install scripts than "
+                                 "this build can represent";
+                    return AF_ERR_TOOMANY;
+                }
             }
         }
 
@@ -917,6 +1003,13 @@ static af_status_t read_apk(const af_u8 *data, af_size len,
             out->error = "no .PKGINFO in the archive — this is a gzipped tar, "
                          "but it is not an Alpine package";
             return AF_ERR_INVAL;
+        }
+
+        if (unknown_dot_names > 0) {
+            // Not an error. A package may carry metadata from a newer apk-tools,
+            // and refusing the whole package over it would be worse than
+            // installing it without that one hook.
+            (void)unknown_dot_names;
         }
     }
 
@@ -1114,6 +1207,21 @@ af_status_t afpkg_open(const af_u8 *data, af_size len,
     return rc;
 }
 
+const char *afpkg_script_name(af_script_kind_t kind)
+{
+    switch (kind) {
+    case AF_SCRIPT_NONE:           return "none";
+    case AF_SCRIPT_PRE_INSTALL:    return "pre-install";
+    case AF_SCRIPT_POST_INSTALL:   return "post-install";
+    case AF_SCRIPT_PRE_UPGRADE:    return "pre-upgrade";
+    case AF_SCRIPT_POST_UPGRADE:   return "post-upgrade";
+    case AF_SCRIPT_PRE_DEINSTALL:  return "pre-deinstall";
+    case AF_SCRIPT_POST_DEINSTALL: return "post-deinstall";
+    case AF_SCRIPT_TRIGGER:        return "trigger";
+    }
+    return "?";
+}
+
 const char *afpkg_error(const af_pkg_t *pkg)
 {
     return (pkg != NULL && pkg->error != NULL) ? pkg->error : "no package";
@@ -1122,45 +1230,6 @@ const char *afpkg_error(const af_pkg_t *pkg)
 void afpkg_iter_begin(afpkg_iter_t *it)
 {
     it->cursor = 0;
-}
-
-// True for the entries at the root of an Alpine archive that describe the
-// package rather than being part of it.
-//
-// THE RULE IS "A DOT-NAME AT THE ROOT", and it was learned from a real package.
-// The first version excluded exactly .PKGINFO and .SIGN.*, naming the two kinds
-// it knew about. busybox-1.36.1-r31.apk then arrived carrying .post-install,
-// .post-upgrade and .trigger — Alpine's install scripts — and all three were
-// offered as files to install. That is wrong twice: they would be written into
-// the root directory as files called ".post-install", and the scripts' actual
-// purpose would never happen.
-//
-// Naming the special cases guarantees being wrong the next time one is added.
-// The structural rule — dot-name, no directory separator — covers .PKGINFO,
-// every .SIGN.* algorithm, all four script names and .trigger, and whatever
-// Alpine introduces next.
-//
-// A package may legitimately ship something like usr/share/.hidden; the "no
-// separator" test is what keeps that as payload.
-//
-// NOT YET EXPOSED: the install scripts are recognised and skipped, but nothing
-// returns them to a caller yet. An installer needs them — .post-install is how a
-// package configures itself — so this is a known gap, not a design choice. It is
-// named here because "the file list is right" is not the same as "the package
-// can be installed".
-static bool apk_metadata_entry(const char *path)
-{
-    if (path[0] != '.') {
-        return false;
-    }
-
-    for (af_size i = 1; path[i] != '\0'; i++) {
-        if (path[i] == '/') {
-            return false;      // not at the root: ordinary payload
-        }
-    }
-
-    return true;
 }
 
 bool afpkg_iter_next(const af_pkg_t *pkg, afpkg_iter_t *it, af_pkg_entry_t *out)

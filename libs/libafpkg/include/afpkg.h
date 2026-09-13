@@ -63,6 +63,39 @@ typedef struct {
 } afpkg_scratch_t;
 
 // -----------------------------------------------------------------------------
+// Install scripts
+//
+// Alpine ships these as dot-named files at the archive root: .pre-install,
+// .post-install, .pre-upgrade, .post-upgrade, .pre-deinstall, .post-deinstall
+// and .trigger. They are the metadata that has to be EXECUTED, as opposed to the
+// metadata that is merely read, and a package manager that ignores them installs
+// a package that does not work.
+//
+// The `data` pointer refers INTO the caller's scratch buffer — the same buffer
+// the file list is walked from — so it is valid for as long as the scratch
+// buffer is, and no longer. That is stated because it is the one lifetime in
+// this library that is not obvious from the types.
+// -----------------------------------------------------------------------------
+typedef enum {
+    AF_SCRIPT_NONE = 0,
+    AF_SCRIPT_PRE_INSTALL,
+    AF_SCRIPT_POST_INSTALL,
+    AF_SCRIPT_PRE_UPGRADE,
+    AF_SCRIPT_POST_UPGRADE,
+    AF_SCRIPT_PRE_DEINSTALL,
+    AF_SCRIPT_POST_DEINSTALL,
+    AF_SCRIPT_TRIGGER,
+} af_script_kind_t;
+
+typedef struct {
+    af_script_kind_t kind;
+    const af_u8     *data;
+    af_size          len;
+} af_pkg_script_t;
+
+#define AFPKG_MAX_SCRIPTS 8
+
+// -----------------------------------------------------------------------------
 // What a package says about itself
 //
 // Sizes are generous rather than exact. A truncated field is a package that
@@ -102,6 +135,10 @@ typedef struct {
     // formats that have one arrive.
     char   provides[AFPKG_MAX_DEPENDS][AFPKG_NAME_LEN];
     af_u32 provides_count;
+
+    // The scripts that must be run, in the order the format requires.
+    af_pkg_script_t scripts[AFPKG_MAX_SCRIPTS];
+    af_u32          script_count;
 } af_pkg_info_t;
 
 // -----------------------------------------------------------------------------
@@ -162,6 +199,10 @@ af_status_t afpkg_open(const af_u8 *data, af_size len,
                        const afpkg_scratch_t *scratch, af_pkg_t *out);
 
 const char *afpkg_error(const af_pkg_t *pkg);
+
+// Names a script kind, for diagnostics. Returns "?" for a value it does
+// not know, which the self test checks cannot happen.
+const char *afpkg_script_name(af_script_kind_t kind);
 
 // Iterates the files the package would install.
 typedef struct {
