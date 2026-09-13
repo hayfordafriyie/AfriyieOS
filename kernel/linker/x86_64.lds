@@ -1,33 +1,45 @@
 /* SPDX-License-Identifier: MIT
- * AfriyieOS — x86_64 kernel linker script
+ * AfriyieOS — x86_64 kernel linker script (v0.1)
  *
- * The kernel is linked into the TOP 2 GiB of the address space, at
- * 0xFFFFFFFF80000000. This is what makes `-mcmodel=kernel` necessary: the
- * default small code model cannot address anything above 2 GiB, so without it
- * every absolute reference is silently truncated.
+ * =============================================================================
+ * WHY THIS IS AN IDENTITY MAPPING AT 1 MiB, AND NOT THE HIGHER HALF
+ * =============================================================================
  *
- * The image itself is loaded at physical 0x100000 (1 MiB) by the boot bridge,
- * which is why the load address and the link address differ and the script is
- * careful to keep the two in step.
+ * The blueprint's final address-space layout (section 3.3) puts the kernel at
+ * 0xFFFFFFFF80000000, the top 2 GiB. That is the right design — but it requires
+ * page tables that map the higher half onto physical memory, and v0.1 has no
+ * paging at all (paging is milestone v0.2).
+ *
+ * Jumping into a higher-half image with paging still off faults immediately:
+ * the instruction fetch at 0xFFFFFFFF80000000 goes to an unmapped address.
+ *
+ * So v0.1 links the kernel as an IDENTITY MAPPING at physical 1 MiB, with the
+ * default (small) code model. When v0.2 introduces the PMM and VMM, this script
+ * gains the higher-half VMA plus a physical load address, a small assembly
+ * bootstrap sets up the initial page tables, and the compiler flag changes to
+ * -mcmodel=kernel. Both changes are made together, in that commit — see
+ * AF_KERNEL_HIGHER_HALF in cmake/flags.cmake.
+ *
+ * 1 MiB is chosen because everything below it is either legacy firmware area,
+ * the EBDA, the VGA window at 0xA0000, or the real-mode IVT. Starting at
+ * 0x100000 is the conventional safe base and it matches KERNEL_LMA in the boot
+ * bridge.
  */
 
 OUTPUT_FORMAT(elf64-x86-64)
 OUTPUT_ARCH(i386:x86-64)
 ENTRY(kernel_entry)
 
-/* Higher-half base: the top 2 GiB, page aligned. */
-KERNEL_VMA = 0xFFFFFFFF80000000;
-KERNEL_LMA = 0x100000;                 /* 1 MiB: safely above the legacy area */
+KERNEL_BASE = 0x100000;   /* 1 MiB: identity-mapped VMA == LMA in v0.1 */
 
 SECTIONS
 {
-    . = KERNEL_VMA;
+    . = KERNEL_BASE;
 
     /* ---------------------------------------------------------------------
      * Text
      * --------------------------------------------------------------------- */
-    .text : AT(ADDR(.text) - KERNEL_VMA + KERNEL_LMA)
-    {
+    .text : {
         /* KEEP: the entry stub must survive --gc-sections, because nothing
          * references it — the boot bridge jumps to it by name. */
         KEEP(*(.text.boot))
@@ -42,8 +54,7 @@ SECTIONS
     /* ---------------------------------------------------------------------
      * Read-only data
      * --------------------------------------------------------------------- */
-    .rodata : AT(ADDR(.rodata) - KERNEL_VMA + KERNEL_LMA)
-    {
+    .rodata : {
         *(.rodata .rodata.*)
         *(.gnu.linkonce.r*)
     }
@@ -53,8 +64,7 @@ SECTIONS
     /* ---------------------------------------------------------------------
      * Initialised data
      * --------------------------------------------------------------------- */
-    .data : AT(ADDR(.data) - KERNEL_VMA + KERNEL_LMA)
-    {
+    .data : {
         *(.data .data.*)
         *(.gnu.linkonce.d*)
     }
@@ -69,8 +79,7 @@ SECTIONS
     . = ALIGN(16);
     __bss_start = .;
 
-    .bss : AT(ADDR(.bss) - KERNEL_VMA + KERNEL_LMA)
-    {
+    .bss : {
         *(.bss .bss.*)
         *(.gnu.linkonce.b*)
         *(COMMON)
@@ -80,18 +89,12 @@ SECTIONS
     __bss_end = .;
 
     /* ---------------------------------------------------------------------
-     * Stack
-     *
-     * v0.1 uses the single stack defined in entry.asm. These symbols exist so
-     * that the debug build and the panic handler can report the stack bounds,
-     * and so that v0.2 can place per-thread stacks relative to the image end.
+     * Image bounds
      * --------------------------------------------------------------------- */
     . = ALIGN(16);
-    __kernel_end = .;
-
-    /* Kernel size, used by the size budget check in CI (blueprint section 14:
-     * the kernel must stay under 64 KiB of .text). */
-    __kernel_size = __kernel_end - KERNEL_VMA;
+    __kernel_end  = .;
+    __kernel_start = KERNEL_BASE;
+    __kernel_size = __kernel_end - __kernel_start;
 
     /* ---------------------------------------------------------------------
      * Non-allocated sections: must not take up image space.

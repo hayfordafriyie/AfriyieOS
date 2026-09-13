@@ -24,17 +24,41 @@ if(AF_WERROR)
 endif()
 
 # -----------------------------------------------------------------------------
+# Higher-half kernel
+#
+# OFF for v0.1. The final design (blueprint section 3.3) puts the kernel at
+# 0xFFFFFFFF80000000, which requires paging — and v0.1 has no paging at all.
+# Turning this on without also adding the v0.2 page-table bootstrap, the
+# higher-half linker script and the physical load address produces a kernel that
+# faults on its first instruction fetch.
+#
+# When v0.2 lands, this becomes the default and -mcmodel=kernel is applied.
+# -----------------------------------------------------------------------------
+option(AF_KERNEL_HIGHER_HALF
+       "Link the kernel into the top 2 GiB (requires the v0.2 paging bootstrap)"
+       OFF)
+
+# -----------------------------------------------------------------------------
 # Kernel flags (C11, privileged)
 # -----------------------------------------------------------------------------
 set(AF_KERNEL_C_FLAGS ${AF_COMMON_FLAGS}
     -std=gnu11
-    -mcmodel=kernel         # kernel image lives in the top 2GB of the address space
-    -mno-red-zone           # x86_64 ONLY (see note below) — interrupt handlers clobber it
+    -mno-red-zone           # x86_64 ONLY (see note below) - interrupt handlers clobber it
     -mno-sse -mno-sse2 -mno-mmx -mno-80387 -mno-avx
                             # no floating point in the kernel, ever
     -fno-asynchronous-unwind-tables
     -fno-unwind-tables
 )
+
+if(AF_KERNEL_HIGHER_HALF)
+    # The default small code model cannot address anything above 2 GiB, so every
+    # absolute reference into the higher half would be silently truncated.
+    list(APPEND AF_KERNEL_C_FLAGS -mcmodel=kernel)
+    message(STATUS "  kernel model  : higher half (-mcmodel=kernel)")
+else()
+    message(STATUS "  kernel model  : identity-mapped at 1 MiB (v0.1; "
+                   "higher half arrives in v0.2)")
+endif()
 
 # NOTE: -mno-red-zone, -mcmodel=kernel and the SSE/x87 family do not exist on
 # ARM64. The arch-specific block below strips them and adds the ARM equivalents.

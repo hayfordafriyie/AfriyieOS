@@ -78,9 +78,19 @@ AF_STATIC_ASSERT_SIZE(af_memory_region_t, 24);
 // -----------------------------------------------------------------------------
 // Framebuffer (from UEFI GOP or the device tree's simple-framebuffer node)
 // -----------------------------------------------------------------------------
+// Pixel formats.
+//
+// The names are deliberately unambiguous about the INTEGER layout of a 32-bit
+// pixel as stored little-endian, because UEFI's own names describe the byte
+// order in memory and are a well-known source of red/blue swaps:
+//
+//   AF_PIXEL_RGBX8888  value 0x00RRGGBB, memory bytes B,G,R,X
+//                      == UEFI PixelBlueGreenRedReserved8BitPerColor
+//   AF_PIXEL_BGRX8888  value 0x00BBGGRR, memory bytes R,G,B,X
+//                      == UEFI PixelRedGreenBlueReserved8BitPerColor
 typedef enum {
-    AF_PIXEL_BGRX8888 = 0,  // UEFI PixelBlueGreenRedReserved8BitPerColor (common)
-    AF_PIXEL_RGBX8888 = 1,  // UEFI PixelRedGreenBlueReserved8BitPerColor
+    AF_PIXEL_BGRX8888 = 0,  // integer 0x00BBGGRR (UEFI PixelRedGreenBlue...)
+    AF_PIXEL_RGBX8888 = 1,  // integer 0x00RRGGBB (UEFI PixelBlueGreenRed...)
     AF_PIXEL_RGB565   = 2,  // phone panels / simplefb with 16bpp
     AF_PIXEL_INDEXED  = 3,  // palette modes — not supported, reported for diagnosis
 } af_pixel_format_t;

@@ -144,7 +144,10 @@ void af_arch_panic_dump(void)
 
         // Raw stack words around rsp. Without a symbol table this is the only
         // way to see a call chain, and it is usually enough.
-        if (f->rsp != 0 && f->rsp < 0xFFFFFFFF80000000ULL) {
+        //
+        // v0.1 runs in the low half (identity-mapped at 1 MiB), so any readable
+        // address below the canonical user ceiling is worth printing.
+        if (f->rsp >= 0x1000 && f->rsp < 0x0000800000000000ULL) {
             const af_u64 *stack = (const af_u64 *)(af_uptr)f->rsp;
             af_log_raw("  stack:\n");
             for (af_u32 i = 0; i < 8; i++) {
