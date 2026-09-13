@@ -1,25 +1,50 @@
 #!/bin/bash
-# Resolve an address in the kernel ELF to the nearest preceding symbol.
+# SPDX-License-Identifier: MIT
+#
+# AfriyieOS — resolve an address in the kernel ELF to the nearest symbol
+#
+# For a panic dump: "rip : 0x00000000001068FE" means nothing on its own.
+#
+# Usage:
+#   ./tools/resolve_addr.sh                 # a default address
+#   ./tools/resolve_addr.sh 0x1068fe
+#   ./tools/resolve_addr.sh 1068fe build/x86_64/kernel.elf
+
 set -uo pipefail
-cd /mnt/c/code/acs/AfriyieOS
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT" || exit 1
 
 export PATH="${AF_CROSS_PREFIX:-$HOME/opt/cross}/bin:$PATH"
 
 ADDR="${1:-1068fe}"
-ELF="${2:-build/x86_64/kernel.elf}"
+ELF="${2:-${AF_BUILD_DIR:-build/x86_64}/kernel.elf}"
 
 NM="${AF_NM:-x86_64-elf-nm}"
-command -v "$NM" >/dev/null 2>&1 || NM=nm
+if ! command -v "$NM" >/dev/null 2>&1; then
+    NM="nm"
+fi
 
-"$NM" -n "$ELF" > /tmp/af-syms.txt
+if [ ! -f "$ELF" ]; then
+    echo "no ELF at $ELF — build it first" >&2
+    exit 1
+fi
 
-python3 - "$ADDR" <<'PY'
-import sys, re
+SYMS="$(mktemp)"
+trap 'rm -f "$SYMS"' EXIT
+
+"$NM" -n "$ELF" > "$SYMS"
+
+# The address is parsed and compared numerically, so 0x1068fe, 1068fe and
+# 0X1068FE all work — a panic dump and a symbol table rarely agree on a format.
+python3 - "$ADDR" "$SYMS" <<'PY'
+import sys
 
 addr = int(sys.argv[1], 16)
 best = None
-with open('/tmp/af-syms.txt') as fh:
-    for line in fh:
+
+with open(sys.argv[2]) as handle:
+    for line in handle:
         parts = line.split()
         if len(parts) < 3:
             continue
@@ -33,5 +58,6 @@ with open('/tmp/af-syms.txt') as fh:
 if best is None:
     print(f"no symbol at or below 0x{addr:x}")
 else:
-    print(f"0x{addr:016x} is in {best[2]} + 0x{addr - best[0]:x}  (symbol 0x{best[0]:x} {best[1]})")
+    print(f"0x{addr:016x} is in {best[2]} + 0x{addr - best[0]:x}  "
+          f"(symbol 0x{best[0]:x} {best[1]})")
 PY

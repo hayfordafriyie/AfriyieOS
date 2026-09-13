@@ -730,10 +730,18 @@ def make_image(build_dir: str, output: str, arch: str, esp_size_mb: int) -> None
     #
     # The newline is part of the expected contents, so a reader that returns the
     # right bytes with the wrong length fails as well.
-    volume.write_file("HELLO.TXT", b"Hello from disk\n")
+    #
+    # Named once and used twice. The length is logged below, and writing it as
+    # len(b"Hello from disk\n") inside an f-string is a syntax error on Python
+    # before 3.12 — PEP 701 lifted the "no backslash in an f-string expression"
+    # restriction, and CI pins 3.11. It parsed fine on the machine this was
+    # written on, which is the whole problem with a version-dependent feature.
+    hello_bytes = b"Hello from disk\n"
+    volume.write_file("HELLO.TXT", hello_bytes)
 
     # The v0.4 acceptance artifact: a real user program, built by the cross
-    # compiler and linked at 4 GiB, sitting in the FAT32 root as an ELF file.
+    # compiler and linked into the user region, sitting in the FAT32 root as an
+    # ELF file.
     #
     # It is packed unmodified. Nothing here patches an entry point or relocates
     # a segment — the kernel's ELF loader is expected to read the file the way
@@ -746,7 +754,7 @@ def make_image(build_dir: str, output: str, arch: str, esp_size_mb: int) -> None
     log(f"ESP: FAT32, {volume.cluster_count} clusters, "
         f"{volume.fat_sectors} sectors per FAT")
     log(f"     wrote {EFI_FALLBACK_PATH}")
-    log(f"     wrote HELLO.TXT ({len(b'Hello from disk\n')} bytes)")
+    log(f"     wrote HELLO.TXT ({len(hello_bytes)} bytes)")
     log(f"     wrote INIT.ELF ({len(init_bytes)} bytes)")
 
     esp_image = volume.finalize()

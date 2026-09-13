@@ -35,10 +35,30 @@
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$REPO_ROOT"
+cd "$REPO_ROOT" || exit 1
 
 VERBOSE=0
 [ "${1:-}" = "-v" ] && VERBOSE=1
+
+# -Wa,--noexecstack marks the stack non-executable in every object; without
+# it the linker assumes an executable stack, which is a real hardening loss.
+#
+# Held in a variable rather than written inline because shellcheck's SC2054
+# reads the comma as an ARRAY ELEMENT SEPARATOR and warns about it, and it
+# reports that at the line the array opens — so a disable directive on the
+# flag's own line does not cover it. Splitting the flag would break the
+# build; disabling the check file-wide would hide real findings elsewhere.
+AF_NOEXECSTACK="-Wa,--noexecstack"
+
+# -Wa,--noexecstack marks the stack non-executable in every object; without
+# it the linker assumes an executable stack, which is a real hardening loss.
+#
+# Held in a variable rather than written inline because shellcheck's SC2054
+# reads the comma as an ARRAY ELEMENT SEPARATOR and warns about it, and it
+# reports that at the line the array opens — so a disable directive on the
+# flag's own line does not cover it. Splitting the flag would break the
+# build; disabling the check file-wide would hide real findings elsewhere.
+AF_NOEXECSTACK="-Wa,--noexecstack"
 
 CC="${AF_HOST_CC:-gcc}"
 AS="${AF_HOST_AS:-nasm}"
@@ -94,7 +114,7 @@ USER_CFLAGS=(
     -fno-omit-frame-pointer
     -fno-builtin
     -mcmodel=large
-    -Wa,--noexecstack
+    "$AF_NOEXECSTACK"
     -Wall -Wextra -Wshadow -Wpointer-arith -Wcast-align -Wwrite-strings
     -Wredundant-decls -Wmissing-declarations -Wno-unused-parameter
     -Werror
@@ -123,7 +143,8 @@ check_c() {
     local file="$1"; shift
     [ "$VERBOSE" = 1 ] && printf '  cc   %s\n' "$file"
 
-    local obj="/tmp/af-check-$(echo "$file" | tr '/' '_').o"
+    local obj
+    obj="/tmp/af-check-$(echo "$file" | tr '/' '_').o"
     local err
     if err=$("$CC" "$@" -c "$file" -o "$obj" 2>&1); then
         c_ok=$((c_ok + 1))
@@ -162,7 +183,8 @@ check_asm() {
     local file="$1"
     [ "$VERBOSE" = 1 ] && printf '  as   %s\n' "$file"
 
-    local out="/tmp/af-check-$(basename "$file").o"
+    local out
+    out="/tmp/af-check-$(basename "$file").o"
     local err
     if err=$("$AS" -f elf64 -o "$out" "$file" 2>&1); then
         asm_ok=$((asm_ok + 1))

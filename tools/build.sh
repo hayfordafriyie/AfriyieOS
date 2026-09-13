@@ -20,7 +20,11 @@
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$REPO_ROOT"
+cd "$REPO_ROOT" || exit 1
+
+# Size budgets live in one file, sourced here and by CI.
+# shellcheck source=tools/budgets.sh
+. "$REPO_ROOT/tools/budgets.sh"
 
 ARCH="x86_64"
 DO_RUN=0
@@ -139,14 +143,19 @@ Keep the entry stub in the .text.boot section placed first by the linker script.
     # unless an ADR explains why the budget was wrong — see ADR-011 in
     # docs/AfriyieOS-Blueprint.md, which raises it to 128 KiB and records what
     # actually changed and how the figure should come back down.
+    #
+    # The number itself comes from tools/budgets.sh, which CI sources too. It was
+    # written out in both places, and when ADR-011 raised it only this copy
+    # changed — CI went on enforcing 64 KiB, unnoticed because an earlier job was
+    # failing and skipping that one.
     if command -v x86_64-elf-size >/dev/null; then
         TEXT_SIZE=$(x86_64-elf-size -A "$BUILD_DIR/kernel.elf" | awk '/^\.text/ {print $2}')
-        if [ "${TEXT_SIZE:-0}" -gt 131072 ]; then
-            die "kernel .text is ${TEXT_SIZE} bytes, over the 128 KiB budget set
-by ADR-011. Either reduce it or extend the ADR with the new figure and the
-reason — do not simply raise the number here."
+        if [ "${TEXT_SIZE:-0}" -gt "$AF_TEXT_BUDGET" ]; then
+            die "kernel .text is ${TEXT_SIZE} bytes, over the ${AF_TEXT_BUDGET} byte
+budget in tools/budgets.sh. Either reduce it or extend ADR-011 with the new
+figure and the reason — do not simply raise the number there."
         fi
-        ok "kernel .text    $TEXT_SIZE bytes (budget 131072, ADR-011)"
+        ok "kernel .text    $TEXT_SIZE bytes (budget $AF_TEXT_BUDGET, ADR-011)"
     fi
 fi
 

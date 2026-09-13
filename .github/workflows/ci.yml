@@ -13,7 +13,14 @@ env:
   # Pinned so a toolchain bump is a deliberate change, not a surprise break.
   BINUTILS_VERSION: "2.42"
   GCC_VERSION: "14.2.0"
-  AF_PREFIX: ${{ github.workspace }}/opt/cross
+  # The name every tool already uses. The workflow said AF_PREFIX, which no
+  # script has ever read: build_toolchain.sh falls back to $HOME/opt/cross,
+  # so the toolchain was built and installed into $HOME/opt/cross while the
+  # cache saved and restored $GITHUB_WORKSPACE/opt/cross. The cache could
+  # never hit — every run rebuilt binutils and gcc from source — and then
+  # PATH pointed at a directory that was still empty, so the very next step
+  # failed to find the compiler it had just spent forty minutes building.
+  AF_CROSS_PREFIX: ${{ github.workspace }}/opt/cross
 
 jobs:
   # ===========================================================================
@@ -46,6 +53,9 @@ jobs:
 
       - name: Byte-compile the tooling
         run: python -m compileall -q tools tests
+
+      - name: Tooling syntax against the CI interpreter
+        run: python tools/pycompat.py
 
       - name: Host test suite (image toolchain)
         run: python -m unittest discover -s tests/host -v
@@ -99,7 +109,7 @@ jobs:
         id: toolchain-cache
         uses: actions/cache@v4
         with:
-          path: ${{ env.AF_PREFIX }}
+          path: ${{ env.AF_CROSS_PREFIX }}
           key: cross-${{ runner.os }}-binutils${{ env.BINUTILS_VERSION }}-gcc${{ env.GCC_VERSION }}-v1
 
       - name: Build the cross toolchain
@@ -110,7 +120,7 @@ jobs:
 
       - name: Verify the toolchains
         run: |
-          export PATH="$AF_PREFIX/bin:$PATH"
+          export PATH="$AF_CROSS_PREFIX/bin:$PATH"
           x86_64-elf-gcc --version | head -1
           x86_64-w64-mingw32-gcc --version | head -1
           nasm -v
@@ -118,11 +128,11 @@ jobs:
 
       - name: Configure
         run: |
-          export PATH="$AF_PREFIX/bin:$PATH"
+          export PATH="$AF_CROSS_PREFIX/bin:$PATH"
           cmake -B build/x86_64 -G Ninja \
                 -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-x86_64-elf.cmake \
                 -DAF_TARGET=x86_64 \
-                -DCROSS_PREFIX="$AF_PREFIX"
+                -DCROSS_PREFIX="$AF_CROSS_PREFIX"
 
       - name: Build
         run: cmake --build build/x86_64 -v
@@ -137,22 +147,38 @@ jobs:
             || { echo "::error::.reloc is not the last PE section"; exit 1; }
           echo "boot bridge: $(stat -c%s "$EFI") bytes, valid PE32+ EFI application"
 
-      - name: Report kernel size against the 64 KiB budget
+      - name: Report kernel size against the .text budget
         run: |
-          export PATH="$AF_PREFIX/bin:$PATH"
+          export PATH="$AF_CROSS_PREFIX/bin:$PATH"
+
+          # build/x86_64/kernel is the CMake target's DIRECTORY. The ELF is
+          # kernel.elf — which is what the kernel target sets as its output name.
+          # This step used to run size against the directory, and had been
+          # failing on it ever since the build-and-boot job first ran; it went
+          # unnoticed because an earlier job failed first and skipped this one.
+          KERNEL=build/x86_64/kernel.elf
+
           {
             echo "### Kernel section sizes"
             echo '```'
-            x86_64-elf-size -A build/x86_64/kernel
+            x86_64-elf-size -A "$KERNEL"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-          TEXT_SIZE=$(x86_64-elf-size -A build/x86_64/kernel | awk '/^\.text/ {print $2}')
-          echo "kernel .text = ${TEXT_SIZE} bytes (budget 65536)"
-          if [ "${TEXT_SIZE:-0}" -gt 65536 ]; then
-            echo "::error::kernel .text exceeded the 64 KiB budget from blueprint section 14"
+          TEXT_SIZE=$(x86_64-elf-size -A "$KERNEL" | awk '/^\.text/ {print $2}')
+
+          # Read from the one place that defines it, so this job and
+          # tools/build.sh cannot disagree. They did: tools/build.sh was raised
+          # to 128 KiB by ADR-011 at v0.3 and this number was left at 64 KiB, so
+          # even with the path fixed, a correct kernel would have failed here.
+          BUDGET=$(bash -c 'source tools/budgets.sh; echo "$AF_TEXT_BUDGET"')
+
+          echo "kernel .text = ${TEXT_SIZE} bytes (budget ${BUDGET})"
+          if [ "${TEXT_SIZE:-0}" -gt "${BUDGET}" ]; then
+            echo "::error::kernel .text is ${TEXT_SIZE} bytes, over the ${BUDGET} byte budget (ADR-011)"
             exit 1
           fi
+          echo "within budget: $((BUDGET - TEXT_SIZE)) bytes spare"
 
       - name: Package the disk image
         run: |
@@ -164,14 +190,15 @@ jobs:
         run: |
           python tools/verify_image.py \
             --image build/x86_64/afriyieos.img \
-            --expect "EFI/BOOT/BOOTX64.EFI:build/x86_64/boot/BOOTX64.EFI"
+            --expect "EFI/BOOT/BOOTX64.EFI:build/x86_64/boot/BOOTX64.EFI" \
+            --expect "INIT.ELF:build/x86_64/init.elf"
 
       - name: Boot in QEMU and assert the boot markers
         run: |
           python tools/run_qemu.py --arch x86_64 \
             --image build/x86_64/afriyieos.img \
             --test --timeout 90 \
-            --serial-log build/x86_64/serial.log
+            --serial-log build/x86_64/boot-serial.log
 
       - name: Show the boot log
         if: always()
@@ -179,7 +206,7 @@ jobs:
           {
             echo "### Boot serial log"
             echo '```'
-            cat build/x86_64/serial.log 2>/dev/null || echo "(no serial log)"
+            cat build/x86_64/boot-serial.log 2>/dev/null || echo "(no serial log)"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -189,12 +216,13 @@ jobs:
         with:
           name: afriyieos-x86_64
           path: |
-            build/x86_64/kernel
+            build/x86_64/kernel.elf
             build/x86_64/kernel.bin
             build/x86_64/kernel.map
+            build/x86_64/init.elf
             build/x86_64/boot/BOOTX64.EFI
             build/x86_64/afriyieos.img
-            build/x86_64/serial.log
+            build/x86_64/boot-serial.log
           if-no-files-found: warn
 
   # ===========================================================================

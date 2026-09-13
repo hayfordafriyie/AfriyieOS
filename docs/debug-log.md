@@ -21,6 +21,127 @@ Lesson:     the generalisable part
 
 ---
 
+## 2026 — Entries from the CI investigation
+
+### CI had never run the kernel, and one line of Python was why
+
+**Milestone:** found after v0.5, looking at why every run was red
+**Symptom:** every push since v0.3 showed a red X. The failing steps were
+"Byte-compile the tooling" and "Shell script syntax", and the third job —
+"Build and boot (T2/T3)" — was **skipped** on every single run.
+
+```
+Host tests, compile and link check (T1): failure
+    -> failure   Byte-compile the tooling
+Lint: failure
+    -> failure   Shell script syntax
+Build and boot (T2/T3): skipped
+```
+
+**Cause:** five separate problems, stacked so that each one hid the next.
+
+1. **`tools/mkimage.py` did not parse on Python 3.11.**
+
+   ```python
+   log(f"     wrote HELLO.TXT ({len(b'Hello from disk\\n')} bytes)")
+   ```
+
+   PEP 701 (Python 3.12) lifted the ban on backslashes inside f-string
+   expressions. CI pins 3.11; the development machine runs 3.14. It parsed
+   locally and failed there with
+
+   ```
+   SyntaxError: f-string expression part cannot include a backslash
+   ```
+
+   This one line is why the build job never ran. It is the *first* step in the
+   *first* job, and a failed job skips everything that `needs:` it.
+
+2. **`shellcheck tools/*.sh` reported 33 findings**, mostly `SC2164` on a bare
+   `cd`, and it exits non-zero for notes and infos as well as warnings.
+
+3. **The kernel size step measured a directory.** It ran
+   `x86_64-elf-size -A build/x86_64/kernel`, and that path is the CMake target's
+   *directory*. The ELF is `kernel.elf`.
+
+4. **The CI budget was 64 KiB while the real budget was 128 KiB.** ADR-011
+   raised it at v0.3 in `tools/build.sh`; CI was not updated. The number was
+   written out in two places and only one of them changed.
+
+5. **`AF_PREFIX` versus `AF_CROSS_PREFIX`.** The workflow set `AF_PREFIX`; every
+   tool reads `AF_CROSS_PREFIX`. So `build_toolchain.sh` installed into
+   `$HOME/opt/cross` while the cache saved `$GITHUB_WORKSPACE/opt/cross` — the
+   cache could never hit, every run rebuilt binutils and GCC from source, and
+   then `PATH` pointed at a directory that was still empty, so the step that
+   checked the compiler failed to find the compiler it had just built.
+
+**Fix:** all five.
+
+* `mkimage.py` names the bytes once and uses the name in the f-string.
+* `tools/pycompat.py` — a new check that makes this class of failure visible
+  locally. See "the first fix for that did not work" below.
+* The scratch scripts were dealt with rather than silenced. Twelve of the
+  nineteen shell scripts in `tools/` had `/mnt/c/code/acs/AfriyieOS` hardcoded —
+  they were development conveniences from this one machine, committed to a
+  public repository, and they accounted for most of the lint noise. Three were
+  deleted as one-off debugging for finished milestones, two were duplicates of a
+  third, and the remaining seven were rewritten as portable tools using
+  `REPO_ROOT`. The genuine false positives got a `disable` directive **with the
+  reason written next to it**.
+* The size budget moved to `tools/budgets.sh`, sourced by both `build.sh` and
+  the workflow. Two copies of a number that must agree is a bug with a schedule.
+* `ci.yml` uses `AF_CROSS_PREFIX`, the name the tools already used.
+
+**Found by:** asking the API which steps failed instead of guessing from the red
+X, then reproducing each step locally. The log made problems 1 and 2 immediate;
+problems 3, 4 and 5 were found by reading the build job against the tree it
+actually produces, because that job had never once run and there was no log to
+read.
+
+**Lesson:** a job that is *skipped* is not a job that passed, and a pipeline
+where the first step fails every time is a pipeline with no coverage at all —
+the red X was accurate and had stopped carrying information. Two narrower
+lessons, both of which cost real time here:
+
+* **Fix the first failure and look again.** Problems 3, 4 and 5 were all behind
+  problem 1. The instinct after fixing it is to push and see green; the correct
+  move is to assume the next hidden failure exists, and go looking for it.
+* **A version split between the development machine and CI is a class of bug,
+  not an instance.** `compileall` cannot catch it, because compiling with a newer
+  interpreter accepts everything the newer interpreter accepts.
+
+---
+
+### The first version of that guard did not work
+
+**Milestone:** same investigation
+**Symptom:** none — the guard reported success on a file containing the exact
+line it was written to reject.
+**Cause:** the first `tools/pycompat.py` used
+`ast.parse(source, feature_version=(3, 11))`, on the reasonable assumption that
+asking the parser for an older grammar would reject newer syntax.
+
+It does not. `feature_version` reverts grammar *productions*; it does not revert
+the *tokenizer*, and PEP 701 was a tokenizer change. Fed a file with a backslash
+inside an f-string expression, it reported zero problems.
+
+**Fix:** a real interpreter at the target version when one is available
+(`python3.11`, or `AF_PY_MIN`), which is the complete check and is what CI gets
+for free; plus, on 3.12+, a targeted tokenizer scan for backslashes inside
+f-string replacement fields, which is where the FSTRING_START / FSTRING_MIDDLE /
+FSTRING_END tokens make the literal parts distinguishable from the expressions.
+The script now prints which of the two checks it was able to run, so a partial
+run is visibly partial.
+**Found by:** running the guard against a file containing the original bad line
+before believing it. It said "0 rejected".
+**Lesson:** a check that cannot fail on the bug it was written for is worse than
+no check, because it is trusted. Every guard needs a positive control — the
+failure case, run once, confirmed to fail — and "I tested it" has to mean that
+and not "I ran it and it passed", which is the same result a broken check gives
+you.
+
+---
+
 ## 2025 — Entries from v0.5 development
 
 ### The USER bit cannot be used to decide who owns a page table

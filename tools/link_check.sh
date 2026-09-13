@@ -27,7 +27,7 @@
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$REPO_ROOT"
+cd "$REPO_ROOT" || exit 1
 
 OUT_DIR="build/linkcheck"
 KEEP=0
@@ -35,7 +35,6 @@ KEEP=0
 
 CC="${AF_HOST_CC:-gcc}"
 LD="${AF_HOST_LD:-ld}"
-OBJDUMP="${AF_HOST_OBJDUMP:-objdump}"
 READELF="${AF_HOST_READELF:-readelf}"
 SIZE="${AF_HOST_SIZE:-size}"
 NM="${AF_HOST_NM:-nm}"
@@ -107,6 +106,9 @@ echo "=== resolving libgcc helper symbols ==="
 UNDEF=$("$NM" -u "$OUT_DIR/kernel.elf" 2>/dev/null | awk '{print $2}' | sort -u)
 if [ -n "$UNDEF" ]; then
     echo "  undefined symbols pulled from libgcc:"
+    # Unquoted on purpose: UNDEF is a newline-separated list and each name
+    # is a separate argument to printf's %s. Quoting it prints one line.
+    # shellcheck disable=SC2086
     printf '    %s\n' $UNDEF
     LIBGCC=$("$CC" -print-libgcc-file-name)
     if [ -f "$LIBGCC" ]; then

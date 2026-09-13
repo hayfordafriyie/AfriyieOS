@@ -10,10 +10,18 @@
 #   ./tools/verify_all.sh              # everything, including a QEMU boot
 #   ./tools/verify_all.sh --no-boot    # skip the emulator checks (fast)
 #
+# shellcheck disable=SC2329
+# The step functions below are invoked BY NAME through `step`, so shellcheck
+# cannot see a call site and reports every one of them as never invoked. The
+# directive has to sit here rather than beside them: a `disable` applies to the
+# next command only, and placing it before the block covered exactly one of the
+# six. The check that matters for a dispatcher is running it, which
+# tools/verify_all.sh is in the habit of doing several times a day.
+#
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$REPO_ROOT"
+cd "$REPO_ROOT" || exit 1
 
 AF_CROSS_PREFIX="${AF_CROSS_PREFIX:-$HOME/opt/cross}"
 export PATH="$AF_CROSS_PREFIX/bin:$PATH"
@@ -47,6 +55,7 @@ skip() {
 
 # Individual steps, so `step` can run them by name.
 
+s_pycompat()     { python3 tools/pycompat.py 2>&1 | tail -6; }
 s_host_tests()   { python3 -m unittest discover -s tests/host 2>&1 | tail -4; }
 s_compile()      { bash tools/compile_check.sh; }
 s_link()         { bash tools/link_check.sh; }
@@ -54,11 +63,12 @@ s_build()        { bash tools/build.sh; }
 s_image()        { python3 tools/verify_image.py \
                        --image build/x86_64/afriyieos.img \
                        --expect "EFI/BOOT/BOOTX64.EFI:build/x86_64/boot/BOOTX64.EFI" \
+                       --expect "INIT.ELF:build/x86_64/init.elf" \
                        | tail -3; }
 s_boot()         { python3 tools/run_qemu.py --arch x86_64 \
                        --image build/x86_64/afriyieos.img \
                        --test --timeout 120 \
-                       --serial-log build/x86_64/serial.log | tail -8; }
+                       --serial-log build/x86_64/boot-serial.log | tail -8; }
 s_screenshot()   { python3 tools/screenshot.py \
                        --image build/x86_64/afriyieos.img \
                        --output build/x86_64/splash.png \
@@ -92,6 +102,12 @@ fi
 rm -f /usr/share/afriyieos-OVMF_VARS.fd 2>/dev/null || true
 
 # --- Tier 1: host only, no cross-compiler --------------------------------
+# Tooling syntax against the CI interpreter FIRST, and not only because it is the
+# fastest check. It is the one that CI runs before anything else, and when it
+# fails there every later job is skipped — so a green local run that misses it is
+# worth almost nothing. See tools/pycompat.py for the line of Python that hid the
+# entire pipeline for four milestones.
+step "Tooling syntax (CI interpreter)"    s_pycompat
 step "Host tests (image toolchain)"       s_host_tests
 step "Compile check (all C + assembly)"   s_compile
 step "Link check (script, symbols, layout)" s_link
@@ -102,7 +118,7 @@ if [ -x "$AF_CROSS_PREFIX/bin/x86_64-elf-gcc" ]; then
     step "Image verification"             s_image
 
     if [ "$DO_BOOT" = 1 ]; then
-        if command -v qemu-system-x86_64 >/dev/null 2>&1 && [ -f /usr/share/OVMF/OVMF_CODE.fd -o -f /usr/share/OVMF/OVMF_CODE_4M.fd ]; then
+        if command -v qemu-system-x86_64 >/dev/null 2>&1 && { [ -f /usr/share/OVMF/OVMF_CODE.fd ] || [ -f /usr/share/OVMF/OVMF_CODE_4M.fd ]; } then
             step "QEMU boot test"         s_boot
             step "Screenshot verification" s_screenshot
         else
