@@ -67,6 +67,7 @@ skip() {
 
 s_pycompat()     { python3 tools/pycompat.py 2>&1 | tail -6; }
 s_host_tests()   { python3 -m unittest discover -s tests/host 2>&1 | tail -4; }
+s_native()       { bash tools/native_test.sh 2>&1 | tail -8; }
 s_compile()      { bash tools/compile_check.sh; }
 s_link()         { bash tools/link_check.sh; }
 s_build()        { bash tools/build.sh; }
@@ -119,6 +120,11 @@ rm -f /usr/share/afriyieos-OVMF_VARS.fd 2>/dev/null || true
 # entire pipeline for four milestones.
 step "Tooling syntax (CI interpreter)"    s_pycompat
 step "Host tests (image toolchain)"       s_host_tests
+# Native tests compile a user-space C library with the HOST compiler and
+# exercise it against generated fixtures. They run before the cross build
+# because they take a second and catch parsing bugs that would otherwise
+# only surface once the whole system boots.
+step "Native tests (user-space C)"        s_native
 step "Compile check (all C + assembly)"   s_compile
 step "Link check (script, symbols, layout)" s_link
 

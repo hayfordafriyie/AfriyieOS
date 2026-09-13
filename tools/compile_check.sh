@@ -107,6 +107,17 @@ BOOT_CFLAGS=(
 #
 # -Wa,--noexecstack matters for the same reason as in the kernel: an object
 # without a .note.GNU-stack section makes the linker assume an executable stack.
+#
+# The include paths are DISCOVERED, not listed. Listing them means every new
+# library needs a matching edit here, and a checker that has to be remembered is
+# a checker that will eventually be forgotten — which is exactly what happened
+# when libafpkg was added and this file still knew only about libaf.
+USER_INCLUDES=()
+for dir in libs/*/include; do
+    [ -d "$dir" ] && USER_INCLUDES+=("-I$dir")
+done
+USER_INCLUDES+=("-Ikernel/include")
+
 USER_CFLAGS=(
     -ffreestanding
     -fno-stack-protector
@@ -120,7 +131,7 @@ USER_CFLAGS=(
     -Werror
     -std=gnu11
     -g -O0
-    -Ilibs/libaf/include
+    "${USER_INCLUDES[@]}"
 )
 
 c_ok=0;   c_fail=0

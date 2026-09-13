@@ -57,6 +57,9 @@ jobs:
       - name: Tooling syntax against the CI interpreter
         run: python tools/pycompat.py
 
+      - name: Native tests (user-space C libraries)
+        run: bash tools/native_test.sh
+
       - name: Host test suite (image toolchain)
         run: python -m unittest discover -s tests/host -v
 
