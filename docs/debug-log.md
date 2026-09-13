@@ -94,7 +94,40 @@ Build and boot (T2/T3): skipped
    the build skipped on a reported cache hit, and the next step would fail looking
    for a compiler nothing had unpacked. Bumped to `-v2`.
 
-**Fix:** all seven.
+8. **The boot-bridge check asserted on `file`'s wording**, and `file` describes
+   the same image differently depending on its version:
+
+   ```
+   dev machine : PE32+ executable for EFI (application), x86-64 ...
+   CI runner   : PE32+ executable (EFI application) x86-64 ..., for MS Windows
+   ```
+
+   The step grepped for `EFI (application)`, which matches the second and not
+   the first. It was written against one machine's `file` and failed on the
+   other's. It now reads the PE subsystem field from `objdump -p` and asserts it
+   is `0x000a` — `IMAGE_SUBSYSTEM_EFI_APPLICATION`, the actual property that
+   makes firmware load the image. `file`'s output is still printed, for humans.
+
+**A PATTERN WORTH NAMING.** Eight faults, and four of them are the same mistake:
+a check whose *implementation detail* differs between the development machine
+and the runner.
+
+```
+1  Python 3.14 accepts f-strings 3.11 rejects
+2  shellcheck 0.11 calls it SC2329, shellcheck 0.9 calls it SC2317
+3  64 KiB locally, 128 KiB in CI — two copies of one number
+8  `file` says "for EFI (application)" here, "(EFI application)" there
+```
+
+None of these is a bug in the kernel. All four are checks that *passed locally*
+and could not pass remotely, and each one cost a full CI round trip to find. The
+common shape: the check was written against an observation of the local
+environment rather than against a property of the artifact. The remedy applied
+here is the same in three of the four cases — assert a *value*
+(`0x000a`, a shared variable, an interpreter's own verdict) rather than a
+*description* of one.
+
+**Fix:** all eight.
 
 * `mkimage.py` names the bytes once and uses the name in the f-string.
 * `tools/pycompat.py` — a new check that makes this class of failure visible

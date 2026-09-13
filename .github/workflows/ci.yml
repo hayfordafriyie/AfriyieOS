@@ -144,22 +144,43 @@ jobs:
       - name: Verify the boot bridge is a UEFI application
         run: |
           EFI=build/x86_64/boot/BOOTX64.EFI
-          file "$EFI"
-          file "$EFI" | grep -q "EFI (application)" \
-            || { echo "::error::BOOTX64.EFI is not an EFI application"; exit 1; }
-          # `objdump -h` prints a section as TWO lines when its flag list is
-          # long: the name line, then a continuation line. `tail -1` therefore
-          # returns a flags line, not a section name, and the grep could never
-          # match — this step was written against the single-line case and would
-          # have failed on every run. It had never run, so nobody knew.
+
+          # Printed for the log, NOT asserted on. `file` describes a PE32+ EFI
+          # application differently depending on its version:
           #
-          # Match the name column at the start of a numbered line instead, and
-          # check the LAST such line, which is what "last section" means.
+          #   dev machine : PE32+ executable for EFI (application), x86-64 ...
+          #   CI runner   : PE32+ executable (EFI application) x86-64 ..., for MS Windows
+          #
+          # This step asserted on "EFI (application)", which matches the second
+          # and not the first. It was written against one machine's `file` and
+          # failed on the other's — the same class of mistake as the Python
+          # version and the shellcheck version, which is why the check below is
+          # against a number instead of prose.
+          file "$EFI"
+
+          # 0x000a is IMAGE_SUBSYSTEM_EFI_APPLICATION, the only value that makes
+          # firmware load the image as a UEFI application. 0x000b and 0x000c are
+          # EFI boot-service and runtime drivers, which boot services will not
+          # hand control to. This is the actual property; `file` only describes it.
+          SUBSYS=$(objdump -p "$EFI" | awk '/^Subsystem/ {print $2}')
+          echo "PE subsystem: $SUBSYS (want 0000000a / EFI application)"
+          [ "$SUBSYS" = "0000000a" ] \
+            || { echo "::error::$EFI has PE subsystem $SUBSYS, not 0x000a (EFI application)"; exit 1; }
+
+          # .reloc must be present and last: firmware relocates the image into
+          # memory and reads the relocation table from the end.
+          #
+          # `objdump -h` prints a section as TWO lines when its flag list is
+          # long: the name line, then a continuation line with the flags. An
+          # earlier version of this check used `tail -1`, which returns a flags
+          # line and never a section name, so it could not match. It had never
+          # run, so nobody found out.
           RELOC_LINE=$(objdump -h "$EFI" | grep -E '^ *[0-9]+ \.' | tail -n 1)
           echo "last PE section: $RELOC_LINE"
           echo "$RELOC_LINE" | grep -q '\.reloc' \
-            || { echo "::error::.reloc is not the last PE section — UEFI firmware needs it there"; exit 1; }
-          echo "boot bridge: $(stat -c%s "$EFI") bytes, valid PE32+ EFI application"
+            || { echo "::error::.reloc is not the last PE section"; exit 1; }
+
+          echo "boot bridge: $(stat -c%s "$EFI") bytes, PE32+ EFI application, .reloc last"
 
       - name: Report kernel size against the .text budget
         run: |
