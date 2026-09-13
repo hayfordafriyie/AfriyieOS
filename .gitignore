@@ -38,9 +38,14 @@ serial*.txt
 *.ppm
 *.pgm
 tests/**/actual-*.png
-core
 gdb.txt
 qemu-monitor.sock
+
+# Core dumps — note the explicit pattern: a bare `core` would also match the
+# kernel/core source directory.
+core.[0-9]*
+core.*.dmp
+!kernel/core/
 
 # ---- Editors ----
 .vscode/
