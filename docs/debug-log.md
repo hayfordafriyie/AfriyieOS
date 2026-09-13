@@ -21,6 +21,87 @@ Lesson:     the generalisable part
 
 ---
 
+## 2026 — Entries from the IPC work
+
+### The message structure did not add up to the size it was documented at
+
+**Milestone:** v0.6
+**Symptom:** the build failed with a static assertion, on the first compile of
+the IPC header:
+
+```
+error: static assertion failed: "af_msg_t must stay exactly 64 bytes — the
+message IS the register-passing wire format, and growing it silently moves
+every IPC onto the slow path"
+```
+**Cause:** the protocol document has declared `af_msg_t` to be 64 bytes since it
+was first written, and its field list sums to 80:
+
+```
+label        af_u64                8
+cap_count    af_u32                4
+_pad         af_u32                4
+caps[4]      af_u64               32
+words[4]     af_u64               32
+                                  -- 
+                                  80
+```
+
+The document contradicted itself in the same code block, and the contradiction
+survived three milestones of review because nobody adds up the fields of a struct
+they are reading. It was found within a second of the structure being *implemented*
+and asserted.
+**Fix:** not to move the target. 64 is the number of argument bytes ARM64 makes
+available in registers (`x0`–`x7`), and it is the threshold the fast path is
+designed around — 80 would be a 25% overhead on every message for no gain. The
+fix is that a capability handle is `af_u32`: an index with a generation packed
+into it, per `cap.h`. Storing one as `u64` both wasted four bytes each and
+contradicted the capability model the same document describes.
+**Found by:** `AF_STATIC_ASSERT(sizeof(af_msg_t) == AF_MSG_SIZE, ...)` — written
+because the size IS the design, and it is the kind of invariant that is cheap to
+assert and expensive to notice.
+**Lesson:** a documented invariant that nothing checks is a comment. The size of
+this structure is load-bearing — it decides whether every IPC in the system is one
+register copy or a memory round trip — and it lived in prose for three milestones.
+The general form: when a number in a document is a *constraint* rather than a
+*description*, put it in the code where it can fail a build.
+
+---
+
+### An assertion that could not fail, wrapping a call that would hang
+
+**Milestone:** v0.6
+**Symptom:** none — it would have been a boot that stopped partway through with no
+error, and I found it by reading my own test before running it.
+**Cause:** the first version of the IPC self test contained
+
+```c
+check(ipc_recv(ep, &in) == AF_ERR_AGAIN || true,
+      "a receive on an empty endpoint with no scheduler context is refused");
+```
+
+Two mistakes in one line.
+
+`|| true` makes the condition unconditionally true, so the assertion cannot fail
+and tests nothing. And the CALL still runs: `ipc_recv` on an empty endpoint from a
+thread that is not the idle thread **blocks**, parking the boot thread forever on
+an endpoint nothing would ever send to. The boot would have stopped after
+`AF_SCHED_OK` with no panic and no marker — and the last thing printed would have
+been a scheduler line, so the investigation would have started in the wrong
+subsystem entirely.
+**Fix:** removed. The empty-endpoint case is tested where it can actually be
+tested — with a real thread, a real sender, and a scheduler — which is the next
+section of the same file.
+**Found by:** reading the test before running it, because the `|| true` looked
+wrong. A test that cannot fail is a smell that leads to the rest.
+**Lesson:** `|| true` in an assertion is never a workaround, it is a deletion. And
+what remains after deleting the assertion is still executed — so the line was not
+harmless, it was an assertion removed *and* a hang left in place. The two mistakes
+tend to arrive together, because the `|| true` is usually added to silence a
+failure that is trying to report the second one.
+
+---
+
 ## 2026 — Entries from the capability work
 
 ### The test tried to derive a right the parent did not have

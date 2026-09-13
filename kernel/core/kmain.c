@@ -42,6 +42,7 @@
 #include "afriyie/syscall.h"
 #include "afriyie/elf.h"
 #include "afriyie/process.h"
+#include "afriyie/ipc.h"
 
 // Defined at the bottom of this file. Declared here because kmain creates the
 // idle thread before the definition appears.
@@ -335,6 +336,12 @@ void kmain(af_boot_info_t *boot_info)
 
     // The v0.2 acceptance test: two threads printing A and B.
     af_sched_selftest();
+
+    // The IPC acceptance test, placed HERE and not with the other self
+    // tests. Half of what IPC does is block, and a test of blocking
+    // without threads and a scheduler tests nothing — every wait would
+    // return immediately because nothing else could ever run.
+    af_ipc_selftest();
 
     sched_dump_state();
 

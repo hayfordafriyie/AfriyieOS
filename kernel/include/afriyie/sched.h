@@ -72,6 +72,14 @@ void sched_collect_zombies(void);
 void sched_set_process(struct af_process *proc);
 
 af_u64 sched_tick_count(void);
+
+// The idle thread, or NULL before sched_init.
+//
+// IPC needs it to refuse to block there. The idle thread is what reaps
+// every other thread's stack, so blocking it wedges the reaper — and the
+// symptom is not an idle thread that hangs but a machine that stops
+// freeing anything, which looks like a leak in whatever ran last.
+af_thread_t *sched_idle_thread(void);
 af_u32 sched_context_switch_count(void);
 
 void sched_dump_state(void);

@@ -55,6 +55,13 @@ set(AF_KERNEL_SOURCES
     # can misuse what the user granted but cannot name what they did not.
     core/cap.c
     core/cap_selftest.c
+    # --- v0.6: IPC ---
+    # Endpoints and the four primitives. This is the transport every
+    # personality speaks (ADR-012): a translated open() is an IPC call to
+    # the file server, and a wrong answer is the worst a bug in a
+    # personality can produce.
+    core/ipc.c
+    core/ipc_selftest.c
 )
 
 # -----------------------------------------------------------------------------

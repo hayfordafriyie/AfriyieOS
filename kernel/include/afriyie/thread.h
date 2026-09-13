@@ -72,6 +72,16 @@ typedef struct af_thread {
     af_u64              switches;        // times this thread has been scheduled
 
     void               *wait_obj;        // what it is blocked on, for diagnostics
+
+    // Links this thread in an object's wait list. Used by IPC endpoints,
+    // and available to anything else that needs to park more than one
+    // thread on one object.
+    //
+    // A single waiter pointer is the obvious design and it is wrong: a
+    // service with two threads receiving would have the second one's wait
+    // replace the first's, and a lost waiter is a thread that never wakes
+    // — a deadlock that presents as a hang somewhere unrelated.
+    struct af_thread   *wait_next;
     char                name[AF_THREAD_NAME_LEN];
 
     // The process this thread belongs to, or NULL for a kernel thread.

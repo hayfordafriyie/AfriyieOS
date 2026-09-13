@@ -1,0 +1,430 @@
+[2J[001;001H[=3h[2J[001;001H[2J[001;001H[8;042;160t[2J[001;001H[2J[001;001H[8;056;240t[2J[001;001HBdsDxe: loading Boot0002 "UEFI Misc Device" from PciRoot(0x0)/Pci(0x3,0x0)
+BdsDxe: starting Boot0002 "UEFI Misc Device" from PciRoot(0x0)/Pci(0x3,0x0)
+
+AfriyieOS 0.1.0 (Seed) UEFI boot bridge
+--------------------------------------------------------------
+  watchdog disabled
+  GOP: 1280x800 pitch 5120
+  kernel: 525 KiB loaded at 0x100000
+
+AfriyieOS 0.1.0 (Seed) booting
+[    0.000000] INFO  boot  : ==============================================================
+[    0.000000] INFO  boot  :  AfriyieOS 0.1.0 (Seed)
+[    0.000000] INFO  boot  : ==============================================================
+[    0.000000] INFO  boot  : firmware        : UEFI
+[    0.000000] INFO  boot  : boot flags      : 0x3
+[    0.000000] INFO  boot  : cpus            : 1
+[    0.000000] INFO  boot  : firmware page   : 4096 bytes
+[    0.000000] INFO  boot  : kernel phys     : 0x100000 (525 KiB)
+[    0.000000] INFO  boot  : ramdisk         : none
+[    0.000000] INFO  boot  : debug uart      : 0x3F8 @ 115200 baud (clk 0 Hz, shift 0)
+[    0.000000] INFO  boot  : framebuffer     : 0x80000000  1280x800  32 bpp  pitch 5120  RGBX8888
+[    0.000000] INFO  boot  : memory regions  : 117
+[    0.000000] INFO  boot  : usable ram      : 2041 MiB
+[    0.000000] INFO  boot  : highest address : 0x10000000000
+[    0.000000] INFO  boot  :   [ 0] 0x00000000000 - 0x00000086FFF       540 KiB  usable
+[    0.000000] INFO  boot  :   [ 1] 0x00000087000 - 0x00000087FFF         4 KiB  bootloader
+[    0.000000] INFO  boot  :   [ 2] 0x00000088000 - 0x0000009FFFF        96 KiB  usable
+[    0.000000] INFO  boot  :   [ 3] 0x00000100000 - 0x00000183FFF       528 KiB  bootloader
+[    0.000000] INFO  boot  :   [ 4] 0x00000184000 - 0x000007FFFFF      6640 KiB  usable
+[    0.000000] INFO  boot  :   [ 5] 0x00000800000 - 0x00000807FFF        32 KiB  acpi-nvs
+[    0.000000] INFO  boot  :   [ 6] 0x00000808000 - 0x0000080AFFF        12 KiB  usable
+[    0.000000] INFO  boot  :   [ 7] 0x0000080B000 - 0x0000080BFFF         4 KiB  acpi-nvs
+[    0.000000] INFO  boot  :   [ 8] 0x0000080C000 - 0x00000813FFF        32 KiB  usable
+[    0.000000] INFO  boot  :   [ 9] 0x00000814000 - 0x000008FFFFF       944 KiB  acpi-nvs
+[    0.000000] INFO  boot  :   [10] 0x00000900000 - 0x0000177FFFF     14848 KiB  bootloader
+[    0.000000] INFO  boot  :   [11] 0x00001780000 - 0x0007BB6BFFF   2002864 KiB  usable
+[    0.000000] INFO  boot  :   [12] 0x0007BB6C000 - 0x0007BB8BFFF       128 KiB  bootloader
+[    0.000000] INFO  boot  :   [13] 0x0007BB8C000 - 0x0007DD73FFF     34720 KiB  usable
+[    0.000000] INFO  boot  :   [14] 0x0007DD74000 - 0x0007DE0FFFF       624 KiB  bootloader
+[    0.000000] INFO  boot  :   [15] 0x0007DE10000 - 0x0007DE95FFF       536 KiB  usable
+[    0.000000] INFO  boot  :   [16] 0x0007DE96000 - 0x0007E50BFFF      6616 KiB  bootloader
+[    0.000000] INFO  boot  :   [17] 0x0007E50C000 - 0x0007E6E9FFF      1912 KiB  bootloader
+[    0.000000] INFO  boot  :   [18] 0x0007E6EA000 - 0x0007E6EAFFF         4 KiB  usable
+[    0.000000] INFO  boot  :   [19] 0x0007E6EB000 - 0x0007E727FFF       244 KiB  bootloader
+[    0.000000] INFO  boot  :   [20] 0x0007E728000 - 0x0007E72AFFF        12 KiB  usable
+[    0.000000] INFO  boot  :   [21] 0x0007E72B000 - 0x0007E730FFF        24 KiB  bootloader
+[    0.000000] INFO  boot  :   [22] 0x0007E731000 - 0x0007E731FFF         4 KiB  usable
+[    0.000000] INFO  boot  :   [23] 0x0007E732000 - 0x0007E7B0FFF       508 KiB  bootloader
+[    0.000000] INFO  boot  :   [24] 0x0007E7B1000 - 0x0007E7BBFFF        44 KiB  bootloader
+[    0.000000] INFO  boot  :   [25] 0x0007E7BC000 - 0x0007E7BFFFF        16 KiB  bootloader
+[    0.000000] INFO  boot  :   [26] 0x0007E7C0000 - 0x0007E7DAFFF       108 KiB  bootloader
+[    0.000000] INFO  boot  :   [27] 0x0007E7DB000 - 0x0007E7DDFFF        12 KiB  bootloader
+[    0.000000] INFO  boot  :   [28] 0x0007E7DE000 - 0x0007E7E9FFF        48 KiB  bootloader
+[    0.000000] INFO  boot  :   [29] 0x0007E7EA000 - 0x0007E7ECFFF        12 KiB  bootloader
+[    0.000000] INFO  boot  :   [30] 0x0007E7ED000 - 0x0007E7F4FFF        32 KiB  bootloader
+[    0.000000] INFO  boot  :   [31] 0x0007E7F5000 - 0x0007E82EFFF       232 KiB  bootloader
+[    0.000000] INFO  boot  :   [32] 0x0007E82F000 - 0x0007E834FFF        24 KiB  bootloader
+[    0.000000] INFO  boot  :   [33] 0x0007E835000 - 0x0007E83AFFF        24 KiB  bootloader
+[    0.000000] INFO  boot  :   [34] 0x0007E83B000 - 0x0007E858FFF       120 KiB  bootloader
+[    0.000000] INFO  boot  :   [35] 0x0007E859000 - 0x0007E85EFFF        24 KiB  bootloader
+[    0.000000] INFO  boot  :   [36] 0x0007E85F000 - 0x0007E874FFF        88 KiB  bootloader
+[    0.000000] INFO  boot  :   [37] 0x0007E875000 - 0x0007E876FFF         8 KiB  bootloader
+[    0.000000] INFO  boot  :   [38] 0x0007E877000 - 0x0007E883FFF        52 KiB  bootloader
+[    0.000000] INFO  boot  :   [39] 0x0007E884000 - 0x0007E886FFF        12 KiB  bootloader
+[    0.000000] INFO  boot  :   [40] 0x0007E887000 - 0x0007E888FFF         8 KiB  bootloader
+[    0.000000] INFO  boot  :   [41] 0x0007E889000 - 0x0007E88AFFF         8 KiB  bootloader
+[    0.000000] INFO  boot  :   [42] 0x0007E88B000 - 0x0007E893FFF        36 KiB  bootloader
+[    0.000000] INFO  boot  :   [43] 0x0007E894000 - 0x0007E894FFF         4 KiB  bootloader
+[    0.000000] INFO  boot  :   [44] 0x0007E895000 - 0x0007E895FFF         4 KiB  bootloader
+[    0.000000] INFO  boot  :   [45] 0x0007E896000 - 0x0007E898FFF        12 KiB  bootloader
+[    0.000000] INFO  boot  :   [46] 0x0007E899000 - 0x0007E8ACFFF        80 KiB  bootloader
+[    0.000000] INFO  boot  :   [47] 0x0007E8AD000 - 0x0007E8AFFFF        12 KiB  bootloader
+[    0.000000] INFO  boot  :   [48] 0x0007E8B0000 - 0x0007E8CBFFF       112 KiB  bootloader
+[    0.000000] INFO  boot  :   [49] 0x0007E8CC000 - 0x0007E8CCFFF         4 KiB  bootloader
+[    0.000000] INFO  boot  :   [50] 0x0007E8CD000 - 0x0007E8D0FFF        16 KiB  bootloader
+[    0.000000] INFO  boot  :   [51] 0x0007E8D1000 - 0x0007E8D2FFF         8 KiB  bootloader
+[    0.000000] INFO  boot  :   [52] 0x0007E8D3000 - 0x0007E8D8FFF        24 KiB  bootloader
+[    0.000000] INFO  boot  :   [53] 0x0007E8D9000 - 0x0007E8DAFFF         8 KiB  bootloader
+[    0.000000] INFO  boot  :   [54] 0x0007E8DB000 - 0x0007E8F0FFF        88 KiB  bootloader
+[    0.000000] INFO  boot  :   [55] 0x0007E8F1000 - 0x0007E8F4FFF        16 KiB  bootloader
+[    0.000000] INFO  boot  :   [56] 0x0007E8F5000 - 0x0007E8FEFFF        40 KiB  bootloader
+[    0.000000] INFO  boot  :   [57] 0x0007E8FF000 - 0x0007E906FFF        32 KiB  bootloader
+[    0.000000] INFO  boot  :   [58] 0x0007E907000 - 0x0007E90AFFF        16 KiB  bootloader
+[    0.000000] INFO  boot  :   [59] 0x0007E90B000 - 0x0007E90EFFF        16 KiB  bootloader
+[    0.000000] INFO  boot  :   [60] 0x0007E90F000 - 0x0007E93EFFF       192 KiB  bootloader
+[    0.000000] INFO  boot  :   [61] 0x0007E93F000 - 0x0007E9FFFFF       772 KiB  runtime
+[    0.000000] INFO  boot  :   [62] 0x0007EA00000 - 0x0007EC02FFF      2060 KiB  bootloader
+[    0.000000] INFO  boot  :   [63] 0x0007EC03000 - 0x0007EC03FFF         4 KiB  bootloader
+[    0.000000] INFO  boot  :   [64] 0x0007EC04000 - 0x0007EC05FFF         8 KiB  bootloader
+[    0.000000] INFO  boot  :   [65] 0x0007EC06000 - 0x0007EC08FFF        12 KiB  bootloader
+[    0.000000] INFO  boot  :   [66] 0x0007EC09000 - 0x0007EC0BFFF        12 KiB  bootloader
+[    0.000000] INFO  boot  :   [67] 0x0007EC0C000 - 0x0007EC0FFFF        16 KiB  bootloader
+[    0.000000] INFO  boot  :   [68] 0x0007EC10000 - 0x0007EC13FFF        16 KiB  bootloader
+[    0.000000] INFO  boot  :   [69] 0x0007EC14000 - 0x0007EC19FFF        24 KiB  bootloader
+[    0.000000] INFO  boot  :   [70] 0x0007EC1A000 - 0x0007EC1CFFF        12 KiB  bootloader
+[    0.000000] INFO  boot  :   [71] 0x0007EC1D000 - 0x0007EC21FFF        20 KiB  bootloader
+[    0.000000] INFO  boot  :   [72] 0x0007EC22000 - 0x0007EC26FFF        20 KiB  bootloader
+[    0.000000] INFO  boot  :   [73] 0x0007EC27000 - 0x0007EC42FFF       112 KiB  bootloader
+[    0.000000] INFO  boot  :   [74] 0x0007EC43000 - 0x0007EC44FFF         8 KiB  bootloader
+[    0.000000] INFO  boot  :   [75] 0x0007EC45000 - 0x0007EC4DFFF        36 KiB  bootloader
+[    0.000000] INFO  boot  :   [76] 0x0007EC4E000 - 0x0007EC4FFFF         8 KiB  bootloader
+[    0.000000] INFO  boot  :   [77] 0x0007EC50000 - 0x0007EC50FFF         4 KiB  bootloader
+[    0.000000] INFO  boot  :   [78] 0x0007EC51000 - 0x0007EC52FFF         8 KiB  bootloader
+[    0.000000] INFO  boot  :   [79] 0x0007EC53000 - 0x0007EC55FFF        12 KiB  bootloader
+[    0.000000] INFO  boot  :   [80] 0x0007EC56000 - 0x0007EC56FFF         4 KiB  bootloader
+[    0.000000] INFO  boot  :   [81] 0x0007EC57000 - 0x0007EC57FFF         4 KiB  bootloader
+[    0.000000] INFO  boot  :   [82] 0x0007EC58000 - 0x0007EC58FFF         4 KiB  bootloader
+[    0.000000] INFO  boot  :   [83] 0x0007EC59000 - 0x0007EC70FFF        96 KiB  bootloader
+[    0.000000] INFO  boot  :   [84] 0x0007EC71000 - 0x0007EC71FFF         4 KiB  bootloader
+[    0.000000] INFO  boot  :   [85] 0x0007EC72000 - 0x0007EC72FFF         4 KiB  bootloader
+[    0.000000] INFO  boot  :   [86] 0x0007EC73000 - 0x0007F087FFF      4180 KiB  bootloader
+[    0.000000] INFO  boot  :   [87] 0x0007F088000 - 0x0007F08BFFF        16 KiB  bootloader
+[    0.000000] INFO  boot  :   [88] 0x0007F08C000 - 0x0007F08CFFF         4 KiB  bootloader
+[    0.000000] INFO  boot  :   [89] 0x0007F08D000 - 0x0007F092FFF        24 KiB  bootloader
+[    0.000000] INFO  boot  :   [90] 0x0007F093000 - 0x0007F094FFF         8 KiB  bootloader
+[    0.000000] INFO  boot  :   [91] 0x0007F095000 - 0x0007F097FFF        12 KiB  bootloader
+[    0.000000] INFO  boot  :   [92] 0x0007F098000 - 0x0007F098FFF         4 KiB  bootloader
+[    0.000000] INFO  boot  :   [93] 0x0007F099000 - 0x0007F0A2FFF        40 KiB  bootloader
+[    0.000000] INFO  boot  :   [94] 0x0007F0A3000 - 0x0007F0A6FFF        16 KiB  bootloader
+[    0.000000] INFO  boot  :   [95] 0x0007F0A7000 - 0x0007F0A9FFF        12 KiB  bootloader
+[    0.000000] INFO  boot  :   [96] 0x0007F0AA000 - 0x0007F4ECFFF      4364 KiB  bootloader
+[    0.000000] INFO  boot  :   [97] 0x0007F4ED000 - 0x0007F5ECFFF      1024 KiB  runtime
+[    0.000000] INFO  boot  :   [98] 0x0007F5ED000 - 0x0007F6ECFFF      1024 KiB  runtime
+[    0.000000] INFO  boot  :   [99] 0x0007F6ED000 - 0x0007F76CFFF       512 KiB  reserved
+[    0.000000] INFO  boot  :   [100] 0x0007F76D000 - 0x0007F77EFFF        72 KiB  acpi-reclaim
+[    0.000000] INFO  boot  :   [101] 0x0007F77F000 - 0x0007F7FEFFF       512 KiB  acpi-nvs
+[    0.000000] INFO  boot  :   [102] 0x0007F7FF000 - 0x0007FDFFFFF      6148 KiB  bootloader
+[    0.000000] INFO  boot  :   [103] 0x0007FE00000 - 0x0007FE6EFFF       444 KiB  usable
+[    0.000000] INFO  boot  :   [104] 0x0007FE6F000 - 0x0007FE8EFFF       128 KiB  bootloader
+[    0.000000] INFO  boot  :   [105] 0x0007FE8F000 - 0x0007FEC2FFF       208 KiB  bootloader
+[    0.000000] INFO  boot  :   [106] 0x0007FEC3000 - 0x0007FEC4FFF         8 KiB  bootloader
+[    0.000000] INFO  boot  :   [107] 0x0007FEC5000 - 0x0007FEC5FFF         4 KiB  usable
+[    0.000000] INFO  boot  :   [108] 0x0007FEC6000 - 0x0007FEC6FFF         4 KiB  bootloader
+[    0.000000] INFO  boot  :   [109] 0x0007FEC7000 - 0x0007FEC7FFF         4 KiB  bootloader
+[    0.000000] INFO  boot  :   [110] 0x0007FEC8000 - 0x0007FED8FFF        68 KiB  bootloader
+[    0.000000] INFO  boot  :   [111] 0x0007FED9000 - 0x0007FEF3FFF       108 KiB  bootloader
+[    0.000000] INFO  boot  :   [112] 0x0007FEF4000 - 0x0007FF77FFF       528 KiB  runtime
+[    0.000000] INFO  boot  :   [113] 0x0007FF78000 - 0x0007FFFFFFF       544 KiB  acpi-nvs
+[    0.000000] INFO  boot  :   [114] 0x000E0000000 - 0x000EFFFFFFF    262144 KiB  reserved
+[    0.000000] INFO  boot  :   [115] 0x000FFC00000 - 0x000FFFFFFFF      4096 KiB  reserved
+[    0.000000] INFO  boot  :   [116] 0x0FD00000000 - 0x0FFFFFFFFFF  12582912 KiB  reserved
+[    0.000000] INFO  boot  : cmdline         : afriyie console=serial fb=gop
+[    0.000000] INFO  boot  : ==============================================================
+[    0.000000] INFO  cpu   : vendor : AuthenticAMD
+[    0.000000] INFO  cpu   : brand  : (brand string unavailable)
+[    0.000000] INFO  cpu   : family 15 model 107 stepping 1
+[    0.000000] INFO  cpu   : cpus   : 0 logical
+[    0.000000] INFO  cpu   : features: 0x78BFBFD (edx) 0x80002001 (ecx)
+[    0.000000] INFO  boot  : AF_GDT_READY
+[    0.000000] INFO  idt   : IDT installed: 256 vectors, 48 exception/IRQ stubs, syscall at 0x80 (DPL 3), PIC at 0x20
+[    0.000000] INFO  boot  : AF_IDT_READY
+[    0.000000] INFO  tss   : TSS installed at 0x17a480: RSP0 = 0x17E4F0 (ring-3 entry stack, 16 KiB)
+[    0.000000] INFO  pmm   : managing 524020 frames (2046 MiB) with 576 KiB of metadata
+[    0.000000] INFO  pmm   : usable: 522700 frames (2041 MiB)
+[    0.000000] INFO  pmm   : reserved 1 frame(s) at 0x0 for null page
+[    0.000000] INFO  pmm   : reserved 4 frame(s) at 0x7000 for boot_info backup
+[    0.000000] INFO  pmm   : reserved 132 frame(s) at 0x100000 for kernel image (.text .rodata .data .bss)
+[    0.000000] INFO  pmm   : reserved 144 frame(s) at 0x1780000 for pmm metadata
+[    0.000000] INFO  pmm   : ready: 522419 frames free of 522700 usable (2040 MiB available)
+[    0.000000] INFO  boot  : AF_PMM_READY
+[    0.000000] INFO  pmm   : frames  : 524020 total, 522419 free, 1601 used
+[    0.000000] INFO  pmm   : memory  : 1.99 GiB free of 2046 MiB total
+[    0.000000] INFO  pmm   : largest free run: 512303 frames (2001 MiB)
+[    0.000000] INFO  pmm   : metadata: 63 KiB bitmap + 511 KiB refcounts
+[    0.000000] INFO  heap  : slab allocator ready: 8 classes from 16 to 2048 bytes, large allocations from 2048 bytes
+[    0.000000] INFO  boot  : AF_HEAP_READY
+[    0.000000] INFO  paging: extending the identity map past the PMM's range to cover the framebuffer at 0x80000000..0x803E8000
+[    0.000000] INFO  paging: kernel page tables installed: identity map of 3 GiB with 2 MiB pages (3 PD tables), CR3 = 0x1000
+[    0.000000] INFO  boot  : AF_PAGING_READY
+[    0.000000] INFO  fb    : framebuffer ready: 1280x800, 32 bpp, pitch 5120, format RGBX8888
+[    0.000000] INFO  splash: drew desktop layout on 1280x800
+[    0.000000] INFO  boot  : AF_FB_READY
+[    0.000000] INFO  test  : running v0.1 self tests
+[    0.000000] DEBUG test  :   ok   all_set
+[    0.000000] DEBUG test  :   ok   all_set
+[    0.000000] DEBUG test  :   ok   memcpy copies bytes
+[    0.000000] DEBUG test  :   ok   memmove handles overlap (dst > src)
+[    0.000000] DEBUG test  :   ok   memmove handles overlap (dst < src)
+[    0.000000] DEBUG test  :   ok   af_strlen("") == 0
+[    0.000000] DEBUG test  :   ok   af_strlen("abc") == 3
+[    0.000000] DEBUG test  :   ok   af_strlen(NULL) == 0
+[    0.000000] DEBUG test  :   ok   af_strcmp("abc", "abc") == 0
+[    0.000000] DEBUG test  :   ok   af_strcmp("abc", "abd") < 0
+[    0.000000] DEBUG test  :   ok   af_strcmp("abd", "abc") > 0
+[    0.000000] DEBUG test  :   ok   af_strncmp("abcdef", "abcxyz", 3) == 0
+[    0.000000] DEBUG test  :   ok   af_strncmp("abcdef", "abcxyz", 4) != 0
+[    0.000000] DEBUG test  :   ok   af_strchr("hello", 'l') != NULL
+[    0.000000] DEBUG test  :   ok   af_strchr("hello", 'z') == NULL
+[    0.000000] DEBUG test  :   ok   af_str_has_prefix("AFRIYIE", "AFR")
+[    0.000000] DEBUG test  :   ok   !af_str_has_prefix("AFR", "AFRIYIE")
+[    0.000000] DEBUG test  :   ok   n == 5
+[    0.000000] DEBUG test  :   ok   strlcpy copies and terminates
+[    0.000000] DEBUG test  :   ok   strlcat appends
+[    0.000000] DEBUG test  :   ok   af_strlen(small) == 7
+[    0.000000] DEBUG test  :   ok   small[7] == '\0'
+[    0.000000] DEBUG test  :   ok   itoa 0
+[    0.000000] DEBUG test  :   ok   itoa negative
+[    0.000000] DEBUG test  :   ok   itoa INT64_MAX
+[    0.000000] DEBUG test  :   ok   itoa INT64_MIN
+[    0.000000] DEBUG test  :   ok   utoa_base hex lowercase
+[    0.000000] DEBUG test  :   ok   utoa_base hex uppercase
+[    0.000000] DEBUG test  :   ok   format_hex with prefix
+[    0.000000] DEBUG test  :   ok   format_hex zero padded to 16
+[    0.000000] DEBUG test  :   ok   format_bytes_human bytes
+[    0.000000] DEBUG test  :   ok   format_bytes_human KiB
+[    0.000000] DEBUG test  :   ok   format_bytes_human MiB
+[    0.000000] DEBUG test  :   ok   snprintf %s %u
+[    0.000000] DEBUG test  :   ok   snprintf %d negative
+[    0.000000] DEBUG test  :   ok   snprintf %x %X
+[    0.000000] DEBUG test  :   ok   snprintf right-aligned width
+[    0.000000] DEBUG test  :   ok   snprintf left-aligned width
+[    0.000000] DEBUG test  :   ok   snprintf zero padding
+[    0.000000] DEBUG test  :   ok   snprintf string precision
+[    0.000000] DEBUG test  :   ok   snprintf literal percent
+[    0.000000] DEBUG test  :   ok   snprintf %llu UINT64_MAX
+[    0.000000] DEBUG test  :   ok   snprintf %p
+[    0.000000] DEBUG test  :   ok   would_be == 10
+[    0.000000] DEBUG test  :   ok   af_strlen(tiny) == 5
+[    0.000000] DEBUG test  :   ok   tiny[5] == '\0'
+[    0.000000] DEBUG test  :   ok   af_boot_info_validate(&bi) == AF_OK
+[    0.000000] DEBUG test  :   ok   af_boot_info_usable_bytes(&bi) == 0x10000000ULL
+[    0.000000] DEBUG test  :   ok   af_boot_info_max_address(&bi) == 0x10100000ULL
+[    0.000000] DEBUG test  :   ok   af_boot_info_find_region(&bi, 0x200000) != NULL
+[    0.000000] DEBUG test  :   ok   af_boot_info_find_region(&bi, 0x0) == NULL
+[    0.000000] DEBUG test  :   ok   af_boot_info_validate(&bad) == AF_ERR_BOOT_MAGIC
+[    0.000000] DEBUG test  :   ok   af_boot_info_validate(&bad) == AF_ERR_BOOT_VERSION
+[    0.000000] DEBUG test  :   ok   af_boot_info_validate(&bad) == AF_ERR_BOOT_VERSION
+[    0.000000] DEBUG test  :   ok   af_boot_info_validate(&bad) == AF_ERR_BOOT_MEMMAP
+[    0.000000] DEBUG test  :   ok   af_boot_info_validate(&bad) == AF_ERR_BOOT_MEMMAP
+[    0.000000] DEBUG test  :   ok   af_boot_info_validate(&bad) == AF_ERR_BOOT_MEMMAP
+[    0.000000] DEBUG test  :   ok   af_boot_info_validate(&bad) == AF_ERR_BOOT_MEMMAP
+[    0.000000] DEBUG test  :   ok   af_boot_info_validate(&bad) == AF_ERR_BOOT_MEMMAP
+[    0.000000] DEBUG test  :   ok   af_boot_info_validate(&bad) == AF_ERR_BOOT_NOFB
+[    0.000000] DEBUG test  :   ok   af_boot_info_validate(&bad) == AF_OK
+[    0.000000] DEBUG test  :   ok   af_boot_info_validate(NULL) == AF_ERR_INVAL
+[    0.000000] DEBUG test  :   ok   s != NULL
+[    0.000000] DEBUG test  :   ok   s->pitch >= (s->width * s->bpp) / 8u
+[    0.000000] DEBUG test  :   ok   s->width > 0 && s->height > 0
+[    0.000000] DEBUG test  :   ok   s->bpp == 16 || s->bpp == 32
+[    0.000000] DEBUG test  :   ok   true
+[    0.000000] DEBUG test  :   ok   w == 4 * AF_FONT_WIDTH
+[    0.000000] DEBUG test  :   ok   h == AF_FONT_HEIGHT
+[    0.000000] DEBUG test  :   ok   w == 4 * AF_FONT_WIDTH * 2
+[    0.000000] DEBUG test  :   ok   h == AF_FONT_HEIGHT * 2
+[    0.000000] DEBUG test  :   ok   pmm single frame alloc/free is exact
+[    0.000000] DEBUG test  :   ok   pmm_alloc_frame_z returns zeroed memory
+[    0.000000] DEBUG test  :   ok   a recycled frame is zeroed again
+[    0.000000] DEBUG test  :   ok   16-frame contiguous run alloc/free is exact
+[    0.000000] DEBUG test  :   ok   refcount holds a frame until the last unref
+[    0.000000] DEBUG test  :   ok   allocated 10000 frames in bulk
+[    0.000000] DEBUG test  :   ok   all 10000 bulk frames are distinct
+[    0.000000] DEBUG test  :   ok   bulk alloc/free returns exactly to the start
+[    0.000000] DEBUG test  :   ok   kmalloc/kfree 64 bytes
+[    0.000000] DEBUG test  :   ok   kzalloc returns zeroed memory
+[    0.000000] DEBUG test  :   ok   every size class allocates and round-trips
+[    0.000000] DEBUG test  :   ok   100 KiB large allocation round-trips
+[    0.000000] DEBUG test  :   ok   krealloc preserves contents
+[    0.000000] DEBUG test  :   ok   kmalloc_aligned honours the alignment
+[    0.000000] DEBUG test  :   ok   fuzz: 50069 allocations, 49931 frees, 138 live
+[    0.000000] DEBUG test  :   ok   100 000-operation fuzz leaves no leak
+[    0.000000] DEBUG test  :   ok   heap_check: slabs, free lists and guard bands are intact
+[    0.000000] DEBUG test  :   ok   mapped 0xFFFF800000000000 -> 0x1E52000, wrote and read back through it
+[    0.000000] DEBUG test  :   ok   unmapped 0xFFFF800000000000; translation is gone
+[    0.000000] DEBUG test  :   ok   unmap of an unmapped page returns ERR_NOENT; re-mapping works
+[    0.000000] DEBUG test  :   ok   a second address space holds its own mappings independently
+[    0.000000] DEBUG test  :   ok   the second address space was destroyed and its frames released
+[    0.000000] DEBUG test  :   ok   a user address space carries the kernel but not the kernel's user mappings
+[    0.000000] DEBUG test  :   ok   the kernel runs on a process address space and reaches its own memory
+[    0.000000] DEBUG test  :   ok   switching back restores the kernel's address space with the process's intact
+[    0.000000] INFO  boot  : AF_VMM_OK
+[    0.000000] INFO  binfmt: 74 format detection checks passed
+[    0.000000] INFO  boot  : AF_BINFMT_OK
+[    0.000000] INFO  proc  : created pid 2 'test-a' (parent 1, address space 0x1E52000)
+[    0.000000] INFO  proc  : created pid 3 'test-b' (parent 1, address space 0x1E77000)
+[    0.000000] INFO  thread: created tid 1 'proc-t1': 16 KiB stack at 0x1E9F000, priority 4
+[    0.000000] DEBUG proc  :   tid 1 joined pid 2 (1 thread(s))
+[    0.000000] INFO  proc  : reaping pid 3 'test-b': releasing address space 0x1E77000
+[    0.000000] INFO  proc  : created pid 4 'share-a' (parent 1, address space 0x1E77000)
+[    0.000000] INFO  proc  : created pid 5 'share-b' (parent 1, address space 0x1E84000)
+[    0.000000] INFO  proc  : reaping pid 4 'share-a': releasing address space 0x1E77000
+[    0.000000] INFO  proc  : reaping pid 5 'share-b': releasing address space 0x1E84000
+[    0.000000] INFO  proc  : reaping pid 2 'test-a': releasing address space 0x1E52000
+[    0.000000] INFO  proc  : 41 process checks passed
+[    0.000000] INFO  boot  : AF_PROC_OK
+[    0.000000] WARN  cap   : derive refused: requested rights 0x2 are not a subset of the held 0x1
+[    0.000000] WARN  cap   : derive refused: requested rights 0x7F are not a subset of the held 0x1
+[    0.000000] WARN  cap   : revoke refused: capability lacks AF_RIGHT_REVOKE
+[    0.000000] INFO  cap   : revoked a capability and 1 derived from it
+[    0.000000] ERROR cap   : capability table is full (256 slots)
+[    0.000000] ERROR cap   : capability table is full (256 slots)
+[    0.000000] INFO  cap   : 52 capability checks passed
+[    0.000000] INFO  boot  : AF_CAP_OK
+[    0.000000] INFO  test  : 71 checks passed
+[    0.000000] INFO  boot  : AF_TEST_OK
+[    0.000000] INFO  boot  : AfriyieOS 0.1.0 ready — kernel is alive
+[    0.000000] INFO  boot  : AF_BOOT_OK
+[    0.000000] INFO  thread: adopted the boot context as tid 2 'boot'
+[    0.000000] INFO  thread: created tid 3 'idle': 16 KiB stack at 0x1E8F000, priority 7
+[    0.000000] INFO  sched : round-robin scheduler ready: 8 priority levels, 2 tick slice at 100 Hz
+[    0.000000] INFO  timer : PIT channel 0: requested 100 Hz, divisor 11931, actual 100 Hz
+[    0.000000] INFO  irq   : IRQ0 handler registered (1 total on this line)
+[    0.000000] INFO  boot  : AF_TIMER_READY
+[    0.000000] INFO  boot  : AF_SCHED_READY
+[    0.000000] INFO  pci   : found 9 device(s) on bus 0
+[    0.000000] INFO  pci   :   bus:slot.func  vendor:device  class             irq
+[    0.000000] INFO  pci   :   00:00.0       8086:29C0      bridge            255
+[    0.000000] INFO  pci   :   00:01.0       1234:1111      display           255
+[    0.000000] INFO  pci   :   00:02.0       8086:10D3      network           11
+[    0.000000] INFO  pci   :   00:03.0       1AF4:1001      storage           11
+[    0.000000] INFO  pci   :   00:04.0       1AF4:1052      unknown           10
+[    0.000000] INFO  pci   :   00:05.0       1AF4:1052      unknown           10
+[    0.000000] INFO  pci   :   00:31.0       8086:2918      bridge            255
+[    0.000000] INFO  pci   :   00:31.2       8086:2922      storage/SATA      10
+[    0.000000] INFO  pci   :   00:31.3       8086:2930      serial bus        10
+[    0.000000] INFO  boot  : AF_PCI_READY
+[    0.000000] INFO  virtio-blk: found 1AF4:1001 at 00:03.0 (irq 11)
+[    0.000000] INFO  virtio-blk: BAR0: I/O ports 0x6000..0x607F (128 bytes)
+[    0.000000] INFO  virtio-blk: device offered features 0x71006ED4; accepting none (read-only: no, flush: yes)
+[    0.000000] INFO  virtio-blk: queue 0: device offers 256 descriptors, using 256 (9222 bytes at 0x1E84000, PFN 7812), request buffer 7 sectors
+[    0.000000] INFO  virtio-blk: ready: 135168 sectors of 512 bytes = 66 MiB
+[    0.010000] INFO  test  : scheduler acceptance test: two threads, 200 iterations each
+[    0.010000] INFO  thread: created tid 4 'alpha': 16 KiB stack at 0x1E93000, priority 4
+[    0.010000] INFO  thread: created tid 5 'beta': 16 KiB stack at 0x1EA3000, priority 4
+[    0.010000] INFO  thread: tid 4 'alpha' exiting after 0 ticks and 201 switches
+[    0.010000] INFO  thread: tid 5 'beta' exiting after 0 ticks and 201 switches
+[    0.010000] INFO  sched : idle thread running (tid 3)
+[    0.030000] DEBUG test  :   ok   both threads ran to completion (200 iterations each; waited 1 ticks)
+[    0.030000] INFO  test  :   first 72 entries: ABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABAB
+[    0.030000] DEBUG test  :   ok   399 A/B transitions, longest run 1 — strict round-robin
+[    0.030000] INFO  thread: created tid 4 'spinner': 16 KiB stack at 0x1E93000, priority 4
+[    0.130000] DEBUG test  :   ok   preemption: a non-yielding thread was interrupted (19371068 iterations counted while the boot thread slept)
+[    0.130000] INFO  thread: tid 4 'spinner' exiting after 6 ticks and 4 switches
+[    0.150000] DEBUG test  :   ok   an exited thread was reaped and removed from the table
+[    0.150000] INFO  boot  : AF_SCHED_OK
+[    0.150000] DEBUG ipc   : endpoint 1 'test-echo' created
+[    0.150000] DEBUG ipc   : endpoint 2 'test-queue' created
+[    0.150000] DEBUG ipc   : endpoint 3 'test-block' created
+[    0.150000] INFO  thread: created tid 4 'ipc-recv': 16 KiB stack at 0x1E93000, priority 4
+[    0.530000] INFO  thread: tid 4 'ipc-recv' exiting after 0 ticks and 2 switches
+[    0.530000] DEBUG ipc   : endpoint 4 'test-server' created
+[    0.530000] INFO  thread: created tid 5 'ipc-server': 16 KiB stack at 0x1EA3000, priority 4
+[    0.530000] DEBUG ipc   : endpoint 5 'reply' created
+[    0.530000] INFO  thread: tid 5 'ipc-server' exiting after 0 ticks and 1 switches
+[    0.530000] DEBUG ipc   : endpoint 5 'reply' destroyed
+[    0.530000] DEBUG ipc   : endpoint 6 'test-doomed' created
+[    0.530000] INFO  thread: created tid 6 'ipc-doomed': 16 KiB stack at 0x1EA7000, priority 4
+[    0.910000] WARN  ipc   : endpoint 6 destroyed under a blocked receiver (tid 6) — waking it with AF_ERR_NOOBJ
+[    0.910000] DEBUG ipc   : endpoint 6 'test-doomed' destroyed
+[    0.910000] INFO  thread: tid 6 'ipc-doomed' exiting after 0 ticks and 2 switches
+[    0.910000] DEBUG ipc   : endpoint 1 'test-echo' destroyed
+[    0.910000] DEBUG ipc   : endpoint 2 'test-queue' destroyed
+[    0.910000] DEBUG ipc   : endpoint 3 'test-block' destroyed
+[    0.910000] DEBUG ipc   : endpoint 4 'test-server' destroyed
+[    0.910000] INFO  ipc   : 59 IPC checks passed (13 messages sent)
+[    0.910000] INFO  boot  : AF_IPC_OK
+[    0.910000] INFO  sched : 91 ticks, 499 context switches, 4 live threads
+[    0.910000] INFO  sched :   run queue priority 7: 1 thread(s)
+[    0.910000] INFO  sched :   running: tid 2 'boot' (slice 2)
+[    0.910000] DEBUG test  :   ok   read sector 0 from an actual disk; boot signature 0xAA55 is present
+[    0.910000] DEBUG test  :   ok   protective MBR partition type is 0xEE — this is the GPT disk the system booted from
+[    0.910000] DEBUG test  :   ok   4-sector read agrees with the single-sector read
+[    0.910000] ERROR block : virtio-blk0: LBA 135168 is past the end of the device (135168 sectors)
+[    0.910000] DEBUG test  :   ok   a read past the end of the device is refused with ERR_INVAL
+[    0.910000] INFO  boot  : AF_BLOCK_OK
+[    0.910000] INFO  gpt   : GPT with 1 partition(s):
+[    0.910000] INFO  gpt   :   [0] LBA 2048..135134 (64 MiB)  'EFI System Partition'
+[    0.910000] DEBUG test  :   ok   found the EFI System Partition at LBA 2048 (64 MiB)
+[    0.910000] INFO  fat32 : mounted at LBA 2048: 512 bytes/sector, 1 sectors/cluster (512 byte clusters)
+[    0.910000] INFO  fat32 :   FAT at LBA 2080 (1040 sectors x 2 copies), data at LBA 4160, root cluster 2, 130975 clusters
+[    0.910000] DEBUG test  :   ok   mounted FAT32 from the ESP
+[    0.910000] INFO  test  :   /EFI/  (0 bytes)
+[    0.910000] INFO  test  :   /HELLO.TXT  (16 bytes)
+[    0.910000] INFO  test  :   /INIT.ELF  (10712 bytes)
+[    0.910000] DEBUG test  :   ok   listed 3 entries in the root directory
+[    0.910000] DEBUG test  :   ok   read 16 bytes from /HELLO.TXT and the contents match exactly
+[    0.910000] INFO  test  :   file contents: "Hello from disk
+"
+[    0.910000] DEBUG test  :   ok   a missing path returns ERR_NOENT rather than walking off the directory
+[    0.910000] INFO  boot  : AF_FS_OK
+[    0.910000] INFO  thread: created tid 4 'usermode-stub': 16 KiB stack at 0x1E93000, priority 4
+[    0.920000] INFO  test  : user mode test: building a ring-3 program at 0x8000000000
+[    0.920000] DEBUG test  :   ok   built a 65-byte ring-3 program; message at 0x8000000080
+[    0.920000] DEBUG test  :   ok   code page is user+exec and NOT writable; stack is user+writable and NOT executable
+[    0.920000] DEBUG test  :   ok   the kernel image at 0x100000 is NOT user-accessible
+[    0.920000] INFO  boot  : AF_USER_PREPARED
+[    0.920000] INFO  test  :   crossing into ring 3 at 0x8000000000 with stack 0x8000011000
+[    0.920000] INFO  test  :   ----------------------------------------------------------
+Hello from ring 3!
+Hello from ring 3!
+[    0.930000] INFO  syscall: user thread exiting with code 0
+[    0.930000] INFO  boot  : AF_USER_OK
+[    0.930000] INFO  syscall: 3 system calls handled from ring 3
+[    0.930000] INFO  thread: tid 4 'usermode-stub' exiting after 2 ticks and 2 switches
+[    0.950000] INFO  boot  : ring-3 stub thread finished; loading init
+[    0.950000] INFO  proc  : created pid 6 '/INIT.ELF' (parent 1, address space 0x1E8C000)
+[    0.950000] INFO  elf   : pid 6, address space 0x1E8C000 (kernel root 0x1000 shared)
+[    0.950000] DEBUG proc  :   tid 2 joined pid 6 (1 thread(s))
+[    0.950000] INFO  elf   : loading '/INIT.ELF': 10712 bytes read
+[    0.950000] INFO  elf   :   entry 0x8000000000, 3 program header(s), ET_EXEC
+[    0.950000] INFO  elf   :   segment 0: 0x8000000000..0x8000000FFF (1 pages) r-x
+[    0.950000] INFO  elf   :   segment 1: 0x8000001000..0x8000001FFF (1 pages) r--
+[    0.950000] INFO  elf   :   segment 2: 0x8000002000..0x8000003FFF (2 pages) rw- +bss
+[    0.950000] INFO  elf   :   stack: 64 KiB at 0x80000F0000..0x80000FFFFF (user+writable, non-exec)
+[    0.950000] INFO  elf   : entering '/INIT.ELF' at 0x8000000000 in ring 3 as pid 6
+[    0.950000] INFO  elf   : ----------------------------------------------------------
+[    0.950000] INFO  boot  : AF_EXEC_PREPARED
+----------------------------------------------------------
+init: hello from a program loaded off the disk
+init:   cs = 0x1b, CPL = 3
+init:   .bss is zero (4096 bytes)
+init:   .data is intact (47 bytes of banner text)
+init:   .bss holds a written pattern, checksum 522240
+init:   clock 960000000 ns -> 980000000 ns (20000000 ns across a yield)
+init:   stage[0] = boot
+[    0.980000] WARN  syscall: sys_debug_write: rejected buffer 0x0 length 16 (out of the user range, wrapping, or not mapped user-readable)
+[    0.980000] WARN  syscall: sys_debug_write: rejected buffer 0xDEADBEEF length 16 (out of the user range, wrapping, or not mapped user-readable)
+[    0.980000] WARN  syscall: sys_debug_write: rejected buffer 0x800005000 length 16 (out of the user range, wrapping, or not mapped user-readable)
+[    0.980000] WARN  syscall: sys_debug_write: rejected buffer 0x7FFFFFFFFFF0 length 4096 (out of the user range, wrapping, or not mapped user-readable)
+[    0.980000] WARN  syscall: sys_debug_write: rejected buffer 0x7FFFFFFFFFF0 length 64 (out of the user range, wrapping, or not mapped user-readable)
+[    0.980000] WARN  syscall: sys_debug_write: rejected buffer 0x8000000000 length 0 (out of the user range, wrapping, or not mapped user-readable)
+init:   6 hostile pointers refused with an error, no kernel fault
+init:   a read-only buffer reads back through a syscall: "init"
+AF_EXEC_RAN
+init: all checks passed, exiting
+----------------------------------------------------------
+[    0.980000] INFO  syscall: user thread exiting with code 0
+[    0.980000] INFO  proc  : pid 6 '/INIT.ELF' exiting with code 0
+[    0.980000] INFO  thread: tid 2 'boot' exiting after 2 ticks and 50 switches
+[    0.980000] INFO  proc  : reaping pid 6 '/INIT.ELF': releasing address space 0x1E8C000
+qemu-system-x86_64: terminating on signal 15 from pid 1167 (python3)

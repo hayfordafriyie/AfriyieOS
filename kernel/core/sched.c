@@ -575,6 +575,11 @@ void sched_set_process(af_process_t *proc)
 // -----------------------------------------------------------------------------
 // Queries and diagnostics
 // -----------------------------------------------------------------------------
+af_thread_t *sched_idle_thread(void)
+{
+    return s_idle;
+}
+
 af_u64 sched_tick_count(void)
 {
     return s_ticks;

@@ -97,6 +97,11 @@ EXPECTED_MARKERS = [
     # transitive revocation. This is what a foreign personality's translated
     # open() lands on, so a bug here is a bug in every personality at once.
     "AF_CAP_OK",
+    # v0.6. IPC: endpoints, the four primitives, blocking with a real
+    # scheduler, rights enforcement, and a blocked client being woken when
+    # its server dies. This is the transport every foreign personality
+    # speaks, so a regression here is a regression in all of them.
+    "AF_IPC_OK",
 ]
 
 FATAL_MARKERS = [

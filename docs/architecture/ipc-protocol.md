@@ -57,15 +57,26 @@ typedef struct {
     af_u64 label;                          /* protocol / method selector  */
     af_u32 cap_count;                      /* how many of caps[] are valid */
     af_u32 _pad;
-    af_u64 caps[AF_MSG_MAX_CAPS];          /* capabilities transferred     */
+    af_u32 caps[AF_MSG_MAX_CAPS];          /* capability handles           */
     af_u64 words[AF_MSG_INLINE_WORDS];     /* 32 bytes of inline payload   */
 } af_msg_t;                                /* 64 bytes */
 ```
 
-64 bytes, fitting exactly in the registers x86_64 and ARM64 make available for
-an argument-passing fast path. There is no header, no length field and no
-serialisation: the structure *is* the wire format, and the kernel copies it as
-four 128-bit moves where it can.
+64 bytes, the number of argument bytes ARM64 makes available in registers
+(`x0`–`x7`), which is what the fast path is designed around. There is no header,
+no length field and no serialisation: the structure *is* the wire format.
+
+> **This table previously said `af_u64 caps[...]` and still claimed 64 bytes.**
+> It does not add up: 8 + 4 + 4 + 32 + 32 = **80**. The contradiction sat here
+> from the first draft and was found by a `_Static_assert` on the structure's
+> size when the header was finally implemented — the kind of error that is
+> invisible to reading and obvious to arithmetic.
+>
+> The fix was not to move the target. 64 is the register count the design turns
+> on; 80 would be a 25% overhead on every message for nothing. The fix is that a
+> capability handle is `af_u32` — an index with a generation packed into it, per
+> [capability-model.md](../architecture/capability-model.md) — so storing one as
+> `u64` both wasted four bytes each and contradicted the capability model.
 
 ### 3.1 Choosing inline words or a grant
 
