@@ -53,10 +53,17 @@ void sched_wake_sleepers(af_u64 now_tick);
 // Removes a terminated thread from the run queue and reaps it.
 void sched_reap(af_thread_t *thread);
 
-// Frees zombie thread structures. MUST be called from a context that does not
-// belong to an exiting thread — the idle loop — because reaping frees the stack
-// the exiting thread was standing on.
+// Frees zombie thread structures, and the address spaces belonging to them.
+// MUST be called from a context that does not belong to an exiting thread — the
+// idle loop — because reaping frees the stack the exiting thread was standing
+// on, and because destroying an address space that may currently be installed
+// would unmap the kernel mid-instruction.
 void sched_collect_zombies(void);
+
+// Makes `root` the current thread's address space and switches to it. Pass 0 to
+// return to the kernel's own. Used by a thread setting up an address space it is
+// about to run on; every other change of address space happens in switch_to.
+void sched_set_addr_space(af_u64 root);
 
 af_u64 sched_tick_count(void);
 af_u32 sched_context_switch_count(void);

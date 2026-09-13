@@ -196,6 +196,23 @@ static af_u64 *walk_to_next_level(af_u64 *parent, af_u32 index, af_u32 flags)
 
 // -----------------------------------------------------------------------------
 // HAL: address space management
+//
+// TWO KINDS OF ROOT, AND THE DIFFERENCE MATTERS.
+//
+// hal_pt_create returns an EMPTY address space. It is what the VMM tests use to
+// prove that two spaces are independent, and it is what a process's user half is
+// built on — but it cannot be installed, because it has no kernel in it. Loading
+// it into CR3 would fault on the very next instruction: the kernel's own code at
+// 0x100000 is not mapped.
+//
+// hal_pt_create_user returns one that CAN be installed: the kernel's half is
+// cloned into it, and the user half is left empty for the process to fill.
+//
+// The distinction went unnoticed until v0.5 because nothing had ever switched to
+// a second address space. The v0.2 test created one, mapped a page into it, and
+// checked the mapping did not leak into the kernel's — all without ever running
+// on it. That is a real test of the mapping machinery and it proved nothing about
+// being able to run there, which is the thing processes need.
 // -----------------------------------------------------------------------------
 hal_pt_root_t hal_pt_create(void)
 {
@@ -204,6 +221,44 @@ hal_pt_root_t hal_pt_create(void)
         af_error("vmm", "could not allocate a page-table root");
         return 0;
     }
+    return (hal_pt_root_t)root;
+}
+
+hal_pt_root_t hal_pt_create_user(void)
+{
+    hal_pt_root_t current = hal_get_page_table();
+    if (current == 0) {
+        af_error("vmm", "hal_pt_create_user called before paging is up");
+        return 0;
+    }
+
+    af_paddr root = alloc_table();
+    if (root == AF_FRAME_INVALID) {
+        af_error("vmm", "could not allocate a page-table root for a process");
+        return 0;
+    }
+
+    af_u64 *src = phys_to_ptr((af_paddr)current);
+    af_u64 *dst = phys_to_ptr(root);
+
+    // Share the kernel's half by pointer; leave the user region empty.
+    //
+    // Nothing is copied. Every kernel entry in the source root — the identity
+    // map, the direct map, whatever the VMM has mapped — is the SAME table in
+    // the new root, which is safe precisely because the process can never write
+    // to it: its own mappings go in AF_USER_PML4_INDEX and nowhere else.
+    //
+    // The entry for the user region is deliberately skipped rather than copied.
+    // If the current address space happens to hold user mappings there — the
+    // ring-3 self test's stub does — those belong to it, not to the new process,
+    // and inheriting them would put one address space's pages inside another's.
+    for (af_u32 i = 0; i < ENTRIES_PER_TABLE; i++) {
+        if (i == AF_USER_PML4_INDEX) {
+            continue;
+        }
+        dst[i] = src[i];
+    }
+
     return (hal_pt_root_t)root;
 }
 
@@ -747,6 +802,109 @@ void af_paging_selftest(void)
 
     af_log(AF_LOG_DEBUG, "test", "  ok   the second address space was destroyed "
                                   "and its frames released");
+
+    // --- an address space that can actually be RUN ON -------------------------
+    //
+    // The test above built an empty root, mapped into it, and checked the
+    // mapping did not leak. All true, and it proves nothing about being able to
+    // run there: an empty root has no kernel in it, so installing it would fault
+    // on the next instruction fetch. That gap is the difference between "the
+    // mapping machinery works" and "a process can exist", and it went unnoticed
+    // until processes needed the second one.
+    hal_pt_root_t uspace = hal_pt_create_user();
+    if (uspace == 0) {
+        af_panic("paging test: could not create a user address space");
+    }
+    if (uspace == root) {
+        af_panic("paging test: the user address space aliases the kernel's");
+    }
+
+    // Checked BEFORE switching, because after the switch there is no way to
+    // report anything. A kernel that is not mapped in this root means the clone
+    // dropped it — the failure mode is a triple fault with no output, so the
+    // precondition is asserted while the machine can still talk.
+    //
+    // The address comes from the linker, not from a literal, so this test keeps
+    // testing the right thing after the higher-half move changes where the
+    // kernel lives.
+    extern const af_u8 __kernel_start[];
+    const af_vaddr text_va = (af_vaddr)(af_uptr)&__kernel_start[0];
+
+    if (hal_translate(uspace, text_va) == 0) {
+        af_panic("paging test: the user address space has no kernel at 0x%lX — "
+                 "installing it would fault on the next instruction fetch",
+                 (af_u64)text_va);
+    }
+
+    // The kernel heap, where every allocation after this one lands.
+    if (hal_translate(uspace, (af_vaddr)(af_uptr)&uspace) == 0) {
+        af_panic("paging test: the kernel's own data is not mapped in the user "
+                 "address space");
+    }
+
+    // ...and the user region must be EMPTY. It is a top-level slot a new address
+    // space does not inherit — the space it was created from keeps its own — so
+    // nothing there should translate yet.
+    if (hal_translate(uspace, AF_USER_REGION_BASE) != 0) {
+        af_panic("paging test: the user address space inherited a user mapping "
+                 "at 0x%lX from the address space it was created in",
+                 (af_u64)AF_USER_REGION_BASE);
+    }
+
+    // A mapping made here must be invisible to the kernel's space — the same
+    // property as the test above, but on the root that will actually be run on.
+    //
+    // The address must be INSIDE the user region for that to hold. At 4 GiB it
+    // would land in PML4[0], which every address space shares with the kernel,
+    // and this assertion would fire. It did, the first time this test was run
+    // with the new layout — which is the point of writing it down.
+    af_u64 probe_va = AF_USER_REGION_BASE;
+    af_paddr probe_frame = pmm_alloc_frame_z();
+    rc = hal_map_page(uspace, probe_va, probe_frame,
+                      HAL_PRESENT | HAL_WRITABLE | HAL_USER);
+    if (af_status_err(rc)) {
+        af_panic("paging test: mapping into the user address space failed (%s)",
+                 af_status_name(rc));
+    }
+    if (hal_translate(root, probe_va) != 0) {
+        af_panic("paging test: a user mapping leaked into the kernel's address "
+                 "space — every process would share one user half");
+    }
+
+    af_log(AF_LOG_DEBUG, "test", "  ok   a user address space carries the kernel "
+                                  "but not the kernel's user mappings");
+
+    // And now the part the earlier test never did: run on it.
+    //
+    // Every check above is a prediction. This is the experiment. If the clone
+    // was wrong anywhere the kernel touches on the way here — its text, its
+    // stack, its heap — the machine dies on the next few instructions with
+    // nothing printed, which is why everything worth asserting was asserted
+    // first and why hal_pt_create_user is written to be conservative.
+    hal_pt_root_t kernel_root = root;
+    hal_set_page_table(uspace);
+
+    // Still executing. The value proves this ran on the new tables rather than
+    // silently failing to switch: CR3 changed, and this read came back.
+    if (hal_get_page_table() != uspace) {
+        af_panic("paging test: hal_set_page_table did not take effect");
+    }
+
+    af_log(AF_LOG_DEBUG, "test", "  ok   the kernel runs on a process address "
+                                  "space and reaches its own memory");
+
+    hal_set_page_table(kernel_root);
+
+    // Back on the kernel's tables, and the user mapping is where it was left.
+    if (hal_translate(uspace, probe_va) != probe_frame) {
+        af_panic("paging test: the user address space lost its mapping across "
+                 "the switch");
+    }
+
+    af_log(AF_LOG_DEBUG, "test", "  ok   switching back restores the kernel's "
+                                  "address space with the process's intact");
+
+    hal_pt_destroy(uspace);
 
     af_marker("AF_VMM_OK");
 }

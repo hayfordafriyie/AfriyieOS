@@ -108,7 +108,24 @@ typedef af_u64 hal_pt_root_t;   // CR3 value / TTBR0 value
 #define HAL_HUGE      (1u << 7)
 
 // Allocates a zeroed page-table root and returns its physical address.
+//
+// The result is an EMPTY address space: it has no kernel in it and cannot be
+// installed. Use it to build an address space in isolation, or as one half of a
+// process. To get a root that can actually be run on, see hal_pt_create_user.
 hal_pt_root_t hal_pt_create(void);
+
+// Allocates a page-table root that CAN be installed: the kernel's half of the
+// current address space is cloned into it, and the user half is left empty.
+//
+// The kernel is reachable from a process — it has to be, since there is no
+// higher-half split yet and the kernel runs on the same tables — but the
+// process's own mappings are private. Sharing the kernel's tables verbatim
+// would put the process's first user page into the kernel's address space and
+// into every other process's, which is the whole thing address spaces exist to
+// prevent.
+//
+// Returns 0 on failure, including out of memory part-way through the clone.
+hal_pt_root_t hal_pt_create_user(void);
 
 // Frees a page-table root and every table it owns.
 void hal_pt_destroy(hal_pt_root_t root);

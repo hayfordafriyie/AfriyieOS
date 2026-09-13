@@ -43,6 +43,8 @@
 #include "afriyie/assert.h"
 #include "afriyie/kstring.h"
 #include "afriyie/syscall.h"
+#include "afriyie/sched.h"
+#include "afriyie/thread.h"
 
 #if AF_TARGET_X86_64
 #include "../arch/x86_64/x86_64.h"
@@ -108,9 +110,13 @@ AF_STATIC_ASSERT_SIZE(elf64_program_header_t, 56);
 // than a bad file.
 #define AF_ELF_MAX_IMAGE (4 * AF_MIB)
 
-// Where the user stack lives. Above the program's own image, and well clear of
-// the identity map so it genuinely exercises the page-table walk.
-#define AF_ELF_STACK_TOP 0x0000000100100000ULL
+// Where the user stack lives: 1 MiB above the base of the user region, leaving
+// the first megabyte of PML[1] for the program's own image.
+//
+// Derived from AF_USER_REGION_BASE rather than written as a literal, because the
+// base is a load-bearing part of the address-space layout (see config.h) and a
+// second copy of it here is a second thing to forget to change.
+#define AF_ELF_STACK_TOP  (AF_USER_REGION_BASE + AF_MIB)
 #define AF_ELF_STACK_SIZE (64 * AF_KIB)
 
 // -----------------------------------------------------------------------------
@@ -440,14 +446,45 @@ af_status_t elf_load(fat32_volume_t *vol, const char *path,
 
 // -----------------------------------------------------------------------------
 // Load and run
+//
+// FROM v0.5 THIS CREATES A REAL ADDRESS SPACE.
+//
+// Until now the program was loaded into the KERNEL's address space, which worked
+// only because there was exactly one user program. The ring-3 self test's stub
+// lives in the same space, and the two collided at the same virtual address —
+// the stub's code page and init's .text landing on each other, with the mapper
+// correctly refusing to remap ERR_EXIST. That collision was the visible symptom
+// of there being no address space per program, and moving the stub to a
+// different address only hid it.
+//
+// Now the program gets its own root. The stub keeps the kernel's.
 // -----------------------------------------------------------------------------
 void elf_exec(fat32_volume_t *vol, const char *path)
 {
     af_vaddr entry = 0;
     af_vaddr stack_top = 0;
 
+    hal_pt_root_t space = hal_pt_create_user();
+    if (space == 0) {
+        af_panic("elf: could not create an address space for '%s'", path);
+    }
+
+    af_info("elf", "address space 0x%lX for '%s' (kernel root 0x%lX shared)",
+            (af_u64)space, path, (af_u64)hal_get_page_table());
+
+    // Attach it to this thread and switch to it BEFORE loading, because elf_load
+    // maps into the current address space. Going through the scheduler rather
+    // than calling hal_set_page_table keeps its record of what CR3 holds
+    // truthful — see sched_set_addr_space.
+    sched_set_addr_space((af_u64)space);
+
     af_status_t rc = elf_load(vol, path, &entry, &stack_top);
     if (af_status_err(rc)) {
+        // Back to the kernel's tables before dying: the panic dump walks the
+        // stack and reads the kernel's data, and doing that on a half-built
+        // address space for a program that failed to load would be reading
+        // through tables that are about to be abandoned.
+        sched_set_addr_space(0);
         af_panic("elf: could not load '%s' (%s)", path, af_status_name(rc));
     }
 
@@ -456,6 +493,7 @@ void elf_exec(fat32_volume_t *vol, const char *path)
 
     af_marker("AF_EXEC_PREPARED");
 
-    // Never returns: the program's exit system call terminates this thread.
+    // Never returns: the program's exit system call terminates this thread, and
+    // the address space is torn down with it when the zombie is reaped.
     af_x86_enter_user_mode(entry, stack_top);
 }

@@ -26,6 +26,7 @@
 
 #include "afriyie/sched.h"
 #include "afriyie/thread.h"
+#include "afriyie/hal.h"
 #include "afriyie/log.h"
 #include "afriyie/assert.h"
 #include "afriyie/spinlock.h"
@@ -42,6 +43,13 @@ static af_thread_t      *s_idle = NULL;
 static af_u64            s_ticks = 0;
 static af_u64            s_switches = 0;
 static volatile bool     s_need_resched = false;
+
+// The kernel's own page-table root, captured once at sched_init, and the root
+// currently installed. Tracking the installed root rather than comparing against
+// CR3 keeps the common case — every switch between two kernel threads — from
+// writing CR3 at all, which would flush the TLB on every tick.
+static hal_pt_root_t     s_kernel_root = 0;
+static hal_pt_root_t     s_last_installed = 0;
 
 // Threads that have exited and are waiting for their structures to be freed.
 // Reaping happens from the scheduler loop rather than from thread_exit(),
@@ -161,6 +169,12 @@ af_status_t sched_init(af_thread_t *boot_thread, af_thread_t *idle_thread)
     s_current = boot_thread;
     s_current->state = AF_THREAD_RUNNING;
 
+    // Whatever root the kernel booted on is the one every kernel thread uses.
+    // Captured here rather than read from CR3 on each switch, because by then it
+    // may be a process's.
+    s_kernel_root = hal_get_page_table();
+    s_last_installed = s_kernel_root;
+
     af_info("sched", "round-robin scheduler ready: %u priority levels, "
                      "%u tick slice at %u Hz",
             (af_u32)AF_PRIO_LEVELS, (af_u32)AF_TIME_SLICE_TICKS,
@@ -248,6 +262,26 @@ static void switch_to(af_thread_t *next)
     // brand new thread's first instructions both depend on the machine being
     // able to take a tick.
     af_restore_flags(flags);
+
+    // Install the incoming thread's address space, if it has one.
+    //
+    // This is where a process's page tables take effect: a user thread carries
+    // its own root and nothing else runs on it. Doing it here rather than in
+    // elf_exec means it is also undone correctly — when the user thread exits,
+    // the next switch installs whatever the next thread uses, which for every
+    // kernel thread is the kernel's own root. Restoring it by hand at the exit
+    // path would have to be repeated at every other path that leaves the thread,
+    // and the one that was missed would run the kernel on a dead process's
+    // tables.
+    //
+    // Safe to do before context_switch: the kernel's own memory is mapped in
+    // every address space (that is what hal_pt_create_user is for), so the
+    // instructions immediately after this, and prev's stack, remain reachable.
+    if (s_kernel_root != 0 && next->addr_space != s_last_installed) {
+        hal_set_page_table(next->addr_space != 0 ? next->addr_space
+                                                 : s_kernel_root);
+        s_last_installed = next->addr_space;
+    }
 
     // The switch itself. When this thread is next scheduled, execution resumes
     // here — inside sched_tick for a preemption, or inside sched_yield for a
@@ -466,7 +500,63 @@ void sched_collect_zombies(void)
 {
     while (s_zombie_count > 0) {
         af_thread_t *zombie = s_zombies[--s_zombie_count];
+
+        // A user thread's address space dies with it.
+        //
+        // This cannot happen where the thread is QUEUED for reaping — the call
+        // in switch_to — because at that moment CR3 may still be that very
+        // space, and freeing the page tables would pull them out from under the
+        // executing kernel: the next instruction fetch would find nothing.
+        //
+        // This runs from the idle thread, which is on the kernel's root by
+        // construction, but the check below is explicit rather than resting on
+        // that. A future caller that collects zombies from somewhere else would
+        // otherwise free the tables it is standing on, and the symptom — an
+        // instant triple fault with no output — would point at the wrong thing.
+        if (zombie->addr_space != 0) {
+            if (s_last_installed == (hal_pt_root_t)zombie->addr_space) {
+                hal_set_page_table(s_kernel_root);
+                s_last_installed = s_kernel_root;
+            }
+            // Logged, not silent. "The address space is freed with its thread" is
+            // a claim, and without a line like this the only evidence for it is
+            // that nothing crashed — which is also what a leak looks like.
+            af_info("sched", "reaping tid %u: releasing address space 0x%lX",
+                    zombie->tid, zombie->addr_space);
+            hal_pt_destroy((hal_pt_root_t)zombie->addr_space);
+            zombie->addr_space = 0;
+        }
+
         thread_reap(zombie);
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Installing an address space by hand
+//
+// For a thread that is setting up its own address space before it runs on it —
+// elf_exec, loading a program into a space it has just created. Everything else
+// goes through switch_to, which does the same thing.
+//
+// It has to be a scheduler entry point rather than a call to hal_set_page_table,
+// because s_last_installed is the scheduler's record of what CR3 holds. Changing
+// CR3 behind its back would make it skip an install it needed, and the thread
+// would run on the wrong tables while every log line said the right one.
+// -----------------------------------------------------------------------------
+void sched_set_addr_space(af_u64 root)
+{
+    if (s_current != NULL) {
+        s_current->addr_space = root;
+    }
+
+    // The extra parentheses are not decoration. C parses the middle operand of
+    // ?: as an expression, and a cast at the start of it is read as a type name,
+    // so `a ? (T)x : y` is a syntax error in C even though it is legal C++.
+    const hal_pt_root_t want = (root != 0) ? ((hal_pt_root_t)root) : s_kernel_root;
+
+    if (want != 0 && want != s_last_installed) {
+        hal_set_page_table(want);
+        s_last_installed = want;
     }
 }
 

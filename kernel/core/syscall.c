@@ -356,24 +356,21 @@ void usermode_dump_stats(void)
 // A program that ran in pages the kernel had already mapped for itself would
 // prove nothing about isolation.
 //
-// WHY 8 GiB AND NOT 4: the ELF loader places real programs at 4 GiB (they are
-// linked there — see libs/libaf/user.lds) with a stack at 4 GiB + 1 MiB. When
-// this test used 4 GiB, init's .text segment landed on the stub's code page and
-// elf_load failed with ERR_EXIST:
+// Inside the user region — PML4[1], 512 GiB — and not the low 4 GiB, because
+// PML4[0] is where the kernel's identity map lives and the two must not share a
+// top-level entry. See AF_USER_PML4_INDEX in config.h for why that is a
+// correctness requirement and not a preference.
 //
-//     ERROR vmm : 0x100000000 is already mapped to 0x1E59000; refusing to
-//                 remap to 0x1E6D000
-//     ERROR elf : segment 0: could not map 0x100000000 (ERR_EXIST)
-//
-// That failure is the honest shape of a real gap: there is ONE address space at
-// v0.4, shared by every user context, so two of them cannot coexist. Giving the
-// stub its own window resolves the collision without pretending the gap is
-// closed. The real fix is a page table per process, which arrives with
-// processes at v0.5 — and until then, nothing may load two programs.
+// The stub and the ELF-loader programs can now share this address, because they
+// no longer share an address SPACE: the stub runs in the kernel's, init in its
+// own. They previously collided at 4 GiB and the loader failed with ERR_EXIST.
 // =============================================================================
 
-#define USER_CODE_BASE   0x0000000200000000ULL   // 8 GiB
-#define USER_STACK_BASE  0x0000000200010000ULL   // 8 GiB + 64 KiB
+#define USER_CODE_BASE   AF_USER_REGION_BASE        // 512 GiB
+// Page-aligned, and the addition is a multiple of the page size on purpose: an
+// offset of one KiB puts the stack base at 0x8000000400 and hal_map_page rejects
+// it with ERR_INVAL, which is a correct refusal and a confusing symptom.
+#define USER_STACK_BASE  (AF_USER_REGION_BASE + (16 * AF_PAGE_SIZE))
 #define USER_MESSAGE_OFFSET 128
 
 void usermode_selftest(void)

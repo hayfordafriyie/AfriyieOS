@@ -3,12 +3,13 @@
  *
  * Two things here are not negotiable.
  *
- * THE LOAD ADDRESS IS 4 GiB. The kernel identity-maps the low 3 GiB as
- * kernel-only using 2 MiB huge pages. A program loaded inside that range would
- * need those huge pages split, and would sit in address space the kernel has
- * already described to itself as its own. 4 GiB is above the identity map and
- * comfortably inside the user half, so the program's pages are separate from
- * the kernel's on every level of the page table.
+ * THE LOAD ADDRESS IS 512 GiB — the base of the user region, which is PML4[1].
+ * The kernel's identity map lives in PML4[0], and a user page anywhere in that
+ * entry would force the USER bit onto the top-level entry shared with the
+ * kernel. See AF_USER_PML4_INDEX in kernel/include/afriyie/config.h: the slot a
+ * program is linked into is part of the address-space contract, not an
+ * implementation detail, and changing it here without changing the kernel
+ * produces a program that loads and then faults.
  *
  * THE SEGMENTS ARE PAGE-ALIGNED. The kernel maps one page at a time, copying
  * each segment's file bytes into the pages it spans. A segment starting
@@ -30,7 +31,7 @@ PHDRS
 
 SECTIONS
 {
-    . = 0x0000000100000000;
+    . = 0x0000008000000000;
 
     .text : ALIGN(4096) {
         *(.text .text.*)

@@ -21,6 +21,111 @@ Lesson:     the generalisable part
 
 ---
 
+## 2025 — Entries from v0.5 development
+
+### The USER bit cannot be used to decide who owns a page table
+
+**Milestone:** v0.5 (found while designing the process address space, before the
+first version of it ran)
+**Symptom:** would have been a triple fault — no output at all — on the first
+instruction fetch after installing a process's page tables.
+**Cause:** the first design for "make a process address space" was to *clone the
+kernel's* and decide ownership entry by entry, keeping what the kernel owned and
+dropping what the old address space owned. The natural rule was the one
+`hal_pt_destroy` already used: an entry with the USER bit belongs to the address
+space, one without it belongs to the kernel.
+
+That rule is wrong above the leaf level, and it is wrong in both directions:
+
+```
+  PML4[0] holds the kernel's identity map (0..3 GiB, no USER)
+  PML4[0] also holds user space at 4 GiB (USER set, and the walk sets it
+          on EVERY level on the path — so PML4[0] itself gains USER)
+```
+
+One entry, then, with two owners. A clone that skipped USER entries would have
+dropped the entire kernel identity map, and the process would have been created
+successfully and then faulted on its next instruction. A clone that kept them
+would have shared the tables, and the process's first user page would have
+appeared in the kernel's address space and in every other process's.
+
+Deciding at the leaf level instead — "a leaf frame is the address space's iff it
+carries USER" — is correct, and it broke `hal_pt_destroy`, which frees frames at
+the PDPT and PD levels without consulting USER at all. Under the new scheme it
+freed the kernel's own identity-map frames, and the boot died with
+
+```
+WARN  pmm : pmm_free_frame(0x0) ignored: not a managed frame
+ERROR pmm : double free of frame 0x2000000
+```
+
+**Fix:** stop trying to decide ownership at all. Give user space its own top-level
+slot — `AF_USER_PML4_INDEX`, PML4[1], 512 GiB — and make every other top-level
+entry the kernel's unconditionally. `hal_pt_create_user` becomes nine lines: copy
+every PML4 entry except that one, sharing the kernel's tables **by pointer**. No
+copying, no recursion, no ownership rule. `hal_pt_destroy`'s existing rule — skip
+non-USER PML4 entries, they are shared kernel tables — was already exactly right
+and needed no change; it becomes correct again the moment PML4[0] stops carrying
+USER.
+**Found by:** a new test that maps a page at 4 GiB into the new address space and
+asserts it does not appear in the kernel's. It fired, correctly, and the message
+named the real problem: at 4 GiB two address spaces genuinely do share a
+top-level entry. Moving the probe into the user region made it pass, and the fact
+that moving the *address* was the fix is what showed the address layout was the
+thing to change rather than the ownership logic.
+**Lesson:** the USER bit is a property of a *page*, propagated up the walk
+because the hardware requires it — not a label saying "this table belongs to the
+user". Any code that reads it as ownership above the leaf level is reading it
+wrong. The design fix was to make ownership structural (a reserved top-level slot)
+rather than inferred, because an inferred ownership rule has to be agreed on by
+every function that walks the tree, and the ones that disagree produce failures
+with no output and no address.
+
+---
+
+### The kernel's address space is not the process's
+
+**Milestone:** v0.5
+**Symptom:** the loader refused init's first segment with `ERR_EXIST`:
+
+```
+INFO  elf : loading '/INIT.ELF': 10712 bytes read
+ERROR vmm : 0x8000000000 is already mapped to 0x1E5A000; refusing to remap to 0x1E6F000
+ERROR elf : segment 0: could not map 0x8000000000 (ERR_EXIST)
+```
+**Cause:** the ring-3 self test's stub and init were both loaded into the
+*kernel's* address space — `elf_exec` used `hal_get_page_table()` — so they claimed
+the same virtual address. This is the same collision that had been "fixed" twice
+before by moving the stub somewhere else: 4 GiB, then 8 GiB, then 512 GiB. Each
+move worked, and each one was treating the symptom. The actual statement being
+made by the collision was **there is no address space per program**, and moving
+addresses does not change that.
+**Fix:** `hal_pt_create_user()` gives the program its own root; the thread carries
+it in a new `addr_space` field; `switch_to` installs it on every context switch,
+so the address space is a property of the running thread rather than of whatever
+ran last. `elf_exec` attaches the space and switches to it *before* loading,
+because the loader maps into the current address space. When the thread exits, the
+zombie is reaped on the kernel's root and the space is destroyed with it.
+
+The scheduler installs the root from the thread field rather than each exit path
+restoring it by hand: a path that forgot would leave the kernel running on a dead
+process's tables, and the failure would appear in some later, unrelated subsystem.
+**Found by:** an `ERR_EXIST` naming both the existing frame and the proposed one,
+which made the two claimants identifiable by grep. The lesson arrived later: the
+same error at a program's *link* address is not a mapping bug, and the third time
+it appeared was the point at which it stopped being a coincidence.
+**Lesson:** a fix that works by moving a constant is a fix that will be needed
+again. Three separate "fixes" here each made the tests pass — by relocating the
+stub to 4 GiB, then 8 GiB, then 512 GiB — and none of them addressed the missing
+abstraction. The signal was that the same class of error kept recurring with a
+different number in it. Also: `hal_pt_create` returning an address space nobody
+can run on is a trap. The v0.2 test created one, mapped into it, and checked the
+mapping did not leak — all true, and none of it proved the root could be
+*installed*. The new test switches to it, which is the only experiment that
+settles the question.
+
+---
+
 ## 2025 — Entries from v0.4 development
 
 ### A range check is not a mapping check

@@ -34,17 +34,23 @@ Where the pieces of the milestone-per-milestone build actually live.
 | `kernel/core/` | C11 | Architecture-independent kernel: log, PMM, heap, threads, scheduler, syscalls, ELF loader |
 | `kernel/arch/x86_64/` | C11 + NASM | GDT, IDT, TSS, paging, PIT, serial, context switch, the ring-3 entry stub |
 | `kernel/drivers/`, `kernel/fs/` | C11 | In-kernel drivers and file systems. **Deliberately temporary** — these move to user space at v0.6–v0.7, which is what returns the kernel core to its 64 KiB budget (ADR-011) |
-| `libs/libaf/` | C11 + GAS | The user-space runtime: system call stub, `crt0.S`, and the linker script that places user programs at 4 GiB |
-| `apps/` | C11 | User programs. `apps/init` is the one the kernel loads and enters at boot |
+| `libs/libaf/` | C11 + GAS | The user-space runtime: system call stub, `crt0.S`, and the linker script that places user programs at 512 GiB |
+| `apps/` | C11 | User programs. `apps/init` is the one the kernel loads, in its own address space, and enters |
 | `tools/` | Python 3 + Bash | Build, image packaging, QEMU runner, verifiers, evidence capture |
 | `tests/host/` | Python 3 | Host-side tests, chiefly of the image builder |
 
-**`libs/libaf/user.lds` links user programs at 4 GiB, not in the low `0x400000`
-range.** The kernel identity-maps the low 3 GiB with 2 MiB huge pages marked
-kernel-only; a user program inside that range would need those pages split and
-would sit in address space the kernel has already claimed. The consequence is that
-user code is compiled with `-mcmodel=large`, since the small code model cannot
-form a 32-bit absolute reference to `0x100000000`.
+**`libs/libaf/user.lds` links user programs at 512 GiB — the base of the user
+region, which is PML4[1].** The slot is part of the address-space contract, and
+`kernel/include/afriyie/config.h` explains why at length. The short version: the
+kernel's identity map lives in PML4[0], the x86 walk requires the USER bit at
+*every* level on the path to a user page, so a single user page in PML4[0] would
+put the USER bit on the top-level entry the kernel shares — one entry with two
+owners and no way to tell them apart. Giving user space its own top-level slot
+lets a process **share** the kernel's tables by pointer, which needs no copying
+and no ownership rule.
+
+The consequence is that user code is compiled with `-mcmodel=large`, since the
+small code model cannot form a 32-bit absolute reference to a 512 GiB address.
 
 ## Design
 

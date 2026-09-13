@@ -192,10 +192,10 @@ int main(void)
     } bad[] = {
         { "null page",              0x0000000000000000ULL, 16 },
         { "unmapped but in range",  0x00000000DEADBEEFULL, 16 },
-        { "a hole in our own image",0x0000000100005000ULL, 16 },
+        { "a hole in our own image",0x000000800005000ULL, 16 },
         { "length that wraps",      0x00007FFFFFFFFFF0ULL, ~(af_u64)0 },
         { "past the user top",      0x00007FFFFFFFFFF0ULL, 64 },
-        { "zero length",            0x0000000100000000ULL, 0 },
+        { "zero length",            0x0000008000000000ULL, 0 },
     };
 
     for (af_u32 i = 0; i < (af_u32)(sizeof(bad) / sizeof(bad[0])); i++) {

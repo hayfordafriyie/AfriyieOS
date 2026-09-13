@@ -74,6 +74,15 @@ typedef struct af_thread {
     void               *wait_obj;        // what it is blocked on, for diagnostics
     char                name[AF_THREAD_NAME_LEN];
 
+    // The page-table root this thread runs on, or 0 for the kernel's own.
+    //
+    // A user thread carries a private address space; every kernel thread shares
+    // the kernel's. The scheduler installs this on each switch, so a thread's
+    // memory is a property of the thread rather than of whatever ran last —
+    // which is what makes "the kernel is mapped everywhere" a fact the kernel
+    // can rely on instead of a hope.
+    af_u64              addr_space;
+
     struct af_thread   *next;            // run-queue link
 } af_thread_t;
 

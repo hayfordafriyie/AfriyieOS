@@ -53,10 +53,36 @@
 #define AF_DIRECT_MAP_BASE  0xFFFF800000000000ULL
 #define AF_KERNEL_HEAP_BASE 0xFFFFC00000000000ULL
 
-// User address space occupies the low half.
+// User address space.
+//
+// THE TOP-LEVEL SLOT IS PART OF THE CONTRACT, not an implementation detail.
+//
+// The kernel's identity map (0..3 GiB) lives in PML4[0]. If user pages also
+// lived there they would share a top-level entry with it — and the x86 walk
+// requires the USER bit at EVERY level on the path to a user page, so mapping one
+// user page anywhere in PML4[0] sets USER on PML4[0] itself. One entry, then, with
+// two owners and no way to tell them apart.
+//
+// That ambiguity is what a process address space has to resolve, and resolving it
+// by copying the tree and deciding ownership entry-by-entry does not work: the
+// USER bit on an intermediate entry means "something below me is the user's", not
+// "all of me is". Getting it wrong in one direction drops the kernel out of the
+// process (a triple fault on the next instruction fetch); getting it wrong in the
+// other frees the kernel's own frames when the process dies.
+//
+// So the layout separates them instead. PML4[1] is the user region and belongs to
+// whoever owns the address space. PML4[0] and PML4[2..511] are the kernel's, and a
+// process shares them by pointer — which needs no copying, no ownership rule, and
+// no agreement between the map path and the free path beyond "index 1 is not
+// yours". hal_pt_destroy already had exactly that rule.
+#define AF_USER_PML4_INDEX  1
+#define AF_USER_REGION_BASE 0x0000008000000000ULL   // 512 GiB — PML4[1]
 #define AF_USER_BASE        0x0000000000001000ULL   // page zero is never mapped
-#define AF_USER_TOP         0x00007FFFFFFFFFFFULL
+#define AF_USER_TOP         0x000000FFFFFFFFFFFULL  // top of PML4[1] — 1 TiB - 1
 #define AF_USER_STACK_SIZE  (8 * AF_MIB)
+
+// Addresses at or above this are the kernel's, whatever the USER bit says.
+#define AF_KERNEL_REGION_BASE AF_USER_REGION_BASE
 
 // -----------------------------------------------------------------------------
 // Kernel limits
