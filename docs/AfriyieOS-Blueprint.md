@@ -875,7 +875,7 @@ of what will **not** work are in
 
 | Version | Deliverable | Verification | Status |
 | --- | --- | --- | --- |
-| **v0.6** | `binfmt` format detection; native ELF personality split from the kernel | 74 boot-time checks on synthetic headers; `AF_BINFMT_OK` asserted in the boot test | ✅ **done** |
+| **v0.6** | `binfmt` format detection; processes; capabilities | 74 format checks + 41 process checks + 52 capability checks at boot; `AF_BINFMT_OK`, `AF_PROC_OK`, `AF_CAP_OK` asserted in the boot test | ✅ **done** |
 | **v0.7** | Exec server as a user-space service; personalities become IPC servers | An unrecognised file produces a clear "no personality" error, not a panic | — |
 | **v0.8** | Linux syscall translator | A real static `busybox` runs; its output is asserted | — |
 | **v0.9** | Package readers: deb, rpm, pacman, apk | Host tests parse real packages from each ecosystem | — |

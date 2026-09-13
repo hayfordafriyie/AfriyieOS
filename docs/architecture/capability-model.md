@@ -1,6 +1,11 @@
 # Capability Model
 
-**Status:** 📐 designed · 📐 implemented at v0.7
+**Status:** 🔨 the TABLE is implemented at v0.6 (52 boot-time checks,
+`AF_CAP_OK`). Rule 1 and Rule 2 are enforced and tested. Two parts of
+this document are still design: revocation does not yet unmap frames,
+because there is no object-to-mapping registry until memory objects
+arrive with IPC; and nothing outside the self test holds a capability
+yet, because no user-space service exists to hand one to.
 
 AfriyieOS has no global namespace. There is no `open("/dev/sda")`, no root user,
 no ambient authority. A thread can do exactly what it holds a capability for, and

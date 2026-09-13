@@ -15,7 +15,7 @@ This directory holds the canonical engineering documentation for AfriyieOS.
 | [architecture/boot-flow.md](architecture/boot-flow.md) | ✅ implemented | How firmware hands control to the kernel, on both PC and phone |
 | [architecture/memory-model.md](architecture/memory-model.md) | 📐 designed, v0.2 | Address-space layout, PMM, VMM, the kernel heap |
 | [architecture/ipc-protocol.md](architecture/ipc-protocol.md) | 📐 designed, v0.7 | Endpoints, message format, `send`/`recv`/`call`/`reply`, grants |
-| [architecture/capability-model.md](architecture/capability-model.md) | 📐 designed, v0.7 | Capability objects, rights, derive/revoke, the bootstrapping chain |
+| [architecture/capability-model.md](architecture/capability-model.md) | 🔨 table implemented, v0.6 | Capability objects, rights, derive/revoke, the bootstrapping chain |
 | [architecture/universal-compat.md](architecture/universal-compat.md) | 🔨 v0.6, detector implemented | How AfriyieOS runs Linux, Windows, Android and macOS software — and what genuinely cannot work |
 
 ## ABI
