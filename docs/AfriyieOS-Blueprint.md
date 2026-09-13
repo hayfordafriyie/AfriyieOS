@@ -1212,25 +1212,32 @@ partially-converted kernel faults on its first instruction fetch.
 - [x] Return-value convention: `>= 0` success, negative `af_status_t` error
 - [x] Numbering is append-only, with retired numbers reserved
 
-#### 0.4.3 Processes — **not started, deferred to v0.5**
+#### 0.4.3 Processes — **partially done at v0.5: address spaces exist, the process object does not**
 - [ ] `struct af_process { pid; addr_space; threads; cap_table; fds; parent; exit_code; }`
-- [ ] `process_create()` clones the kernel page tables, creates a user address space
+- [x] A user address space that can be installed — `hal_pt_create_user`, with the
+      kernel's half shared by pointer and user space confined to its own top-level
+      slot. Proved by a test that creates one, checks the kernel is reachable and
+      the user region is not, then **switches to it and switches back**.
+- [x] The address space is a property of the running thread: the scheduler installs
+      it on every context switch, and destroys it when the thread is reaped.
+- [ ] `process_create()` — the object that owns an address space and a set of
+      threads. Today the address space is owned by a **thread**, which means two
+      threads of one program would not share memory. That is the next thing.
 - [ ] `process_fork()` via copy-on-write page tables
 - [ ] `sys_thread_create` spawning a user thread in the current process
 - [ ] `sys_process_spawn(path_cap, argv)`
-- [ ] `wait`/`exit` semantics, zombie reaping, an "init" process that never dies
+- [ ] `wait`/`exit` semantics, an "init" process that never dies
 
-> **Why this is deferred rather than half-built.** At v0.4 there is exactly **one
-> address space**: `hal_get_page_table()` returns the kernel's own root, and every
-> user context is mapped into it. That is enough to prove the privilege boundary
-> and the loader, and it is not enough for anything else. The first two attempts
-> to run two ring-3 contexts collided at 4 GiB and produced `ERR_EXIST` from the
-> mapping layer — a correct refusal, and the honest symptom of the missing
-> abstraction (see `docs/debug-log.md`, "Two ring-3 contexts cannot share one
-> address space"). Giving the self test its own 8 GiB window unblocked v0.4. **It
-> did not close the gap, and nothing may load two programs until it does.**
-> Building `fork` before the VMM can hand out independent address spaces would
-> mean writing it twice.
+> **What v0.5 actually changed, and what it did not.** The limitation that blocked
+> this milestone is gone: there are now genuinely separate address spaces, and a
+> program is loaded into its own rather than into the kernel's. What remains is the
+> *object* that groups threads under one address space, and everything that follows
+> from it — `fork`, `spawn`, `wait`, and the `af_process_t *` that
+> `docs/abi/syscalls.md` §3 passes to its validator.
+>
+> The reason this is not stubbed: an address space owned by a thread is enough to
+> run one program, and it is exactly the wrong shape for two. Adding `fork` on top
+> of it would mean writing it twice.
 
 #### 0.4.4 ELF64 loader
 - [x] Validate the header: magic, class=64, little-endian, machine=x86_64,
