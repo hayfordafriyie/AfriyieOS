@@ -38,6 +38,26 @@ if [ ! -d "$FIXTURES" ] || [ -z "$(ls -A "$FIXTURES" 2>/dev/null)" ]; then
     python3 tools/pkgsynth.py --out "$FIXTURES" || exit 1
 fi
 
+# -----------------------------------------------------------------------------
+# The Zstandard fixtures come from `compression.zstd`, which is new in Python
+# 3.14. On an older interpreter they are silently absent — and a suite that
+# quietly tests nothing is worse than one that fails, because almost every bug
+# found in this decoder produced output of the right LENGTH with the wrong
+# bytes. Nothing except these vectors can see one.
+#
+# So their absence is an error, with the reason named rather than the symptom.
+# -----------------------------------------------------------------------------
+if [ ! -f "$FIXTURES/zstd_text.6.zst" ]; then
+    echo
+    echo "FATAL: $FIXTURES/zstd_text.6.zst is missing, so the Zstandard decoder"
+    echo "       would go untested. The vectors come from Python's"
+    echo "       compression.zstd, which is new in 3.14. This interpreter is:"
+    echo "         $(python3 --version 2>&1)"
+    echo "       Install 3.14 or newer. (CI installs both 3.11 and 3.14: see"
+    echo "       .github/workflows/ci.yml for why.)"
+    exit 1
+fi
+
 mkdir -p build/native
 
 # -----------------------------------------------------------------------------

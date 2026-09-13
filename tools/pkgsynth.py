@@ -598,7 +598,19 @@ def write_zstd_vectors(out_dir: str) -> None:
     try:
         from compression import zstd
     except ImportError:
-        print("  zstd vectors: SKIPPED (no compression.zstd in this interpreter)")
+        # NOT A SILENT SKIP. The Zstandard vectors are the only thing standing
+        # between a decoder that is right and a decoder that merely produces
+        # output of the right length — six of the nine defects found in it were
+        # invisible to every other kind of check. A generator that quietly emits
+        # no vectors turns the native suite's most load-bearing tests into
+        # nothing at all, and CI would stay green while the decoder rotted.
+        print("  zstd vectors:   MISSING — this interpreter has no "
+              "compression.zstd.")
+        print("                  Python 3.14 or newer is required. On an older "
+              "one the")
+        print("                  Zstandard decoder is NOT tested and the native "
+              "suite")
+        print("                  will say so rather than pass.")
         return
 
     payloads = deflate_payloads()          # the same six, deliberately
