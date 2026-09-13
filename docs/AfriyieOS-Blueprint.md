@@ -127,6 +127,50 @@ We accept IPC cost and engineer it down (§14 performance budgets).
 | ADR-008 | QEMU as the only mandatory test platform until `v0.9` | Physical hardware debugging is brutally slow without JTAG | Real hardware from day one |
 | ADR-009 | CMake 3.28+ (with Ninja) as the single build system | Cross-arch, toolchain files, IDE support | Hand-written Makefiles (fall apart at this scale) |
 | ADR-010 | Message-passing UI, not in-process widgets | A crashed app cannot take down the compositor | Everything in one GUI process |
+| ADR-011 | **Kernel `.text` budget raised from 64 KiB to 128 KiB at v0.3** | See below | — |
+
+### ADR-011 — the kernel size budget, revised
+
+**Context.** Through v0.2 the kernel `.text` sat at 33–52 KiB against a 64 KiB
+budget. At v0.3 the milestone added PCI enumeration, a block device layer and the
+virtio-blk driver — and `.text` reached **68 807 bytes**, breaking the budget.
+
+**The rule this ADR exists to honour.** §14 says a change that breaks a budget does
+not merge, "unless the change is accompanied by an ADR explaining why the budget
+was wrong". So the options were to reduce the size or to justify the increase in
+writing. Both were considered.
+
+**What actually grew, and what did not.** The microkernel proper — scheduler, IPC,
+virtual memory, capability manager, interrupt control — is *not* what broke the
+budget. What broke it is a **kernel-mode device driver** (virtio-blk), **bus
+enumeration** (PCI), and **boot-time graphics** (the framebuffer, bitmap font and
+splash screen). Every one of those is code that the architecture says should
+**not** be in Ring 0:
+
+| Growth | Where it belongs | Moves out |
+| --- | --- | --- |
+| virtio-blk driver | user-space driver process | v0.7 |
+| PCI enumeration | device manager service | v0.7 |
+| Framebuffer, font, splash | compositor and UI framework | v0.6–v0.8 |
+
+**Decision.** Raise the enforced budget to **128 KiB** for v0.3, and state the
+figure that matters: the **microkernel core must return to under 64 KiB** once
+drivers and boot graphics move to user space at v0.6–v0.7. CI enforces the 128 KiB
+gate now, and a second, separate measurement of the core will be added when the
+first driver leaves the kernel — because that is the point at which the number
+becomes meaningful again.
+
+**Consequences.** The budget is temporarily less strict than the architecture
+intends, and that is recorded rather than hidden. The risk is that "128 KiB" quietly
+becomes the new normal and the driver migration slips; the mitigation is that this
+ADR names the migration as the thing that restores the figure, and the v0.7 task
+list carries an explicit check on kernel size before and after.
+
+**Alternatives rejected.** Compiling with `-Os` would recover perhaps 10 KiB and
+make the kernel slower on the boot path to buy nothing structural. Splitting the
+driver into a loadable module would be work spent on a mechanism that user-space
+drivers replace entirely. Neither addresses the actual cause, which is that code
+the architecture wants out of Ring 0 is currently in it.
 
 ---
 

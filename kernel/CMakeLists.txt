@@ -26,6 +26,10 @@ set(AF_KERNEL_SOURCES
     core/irq.c
     core/thread.c
     core/sched.c
+    # --- v0.3: devices and storage ---
+    core/pci.c
+    core/block.c
+    drivers/virtio_blk.c
 )
 
 # -----------------------------------------------------------------------------

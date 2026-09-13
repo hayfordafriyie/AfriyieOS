@@ -61,6 +61,8 @@ EXPECTED_MARKERS = [
     "AF_TIMER_READY",
     "AF_SCHED_READY",
     "AF_SCHED_OK",
+    "AF_PCI_READY",
+    "AF_BLOCK_OK",
 ]
 
 FATAL_MARKERS = [
@@ -156,7 +158,6 @@ def build_command(args) -> List[str]:
         log(f"OVMF vars: {writable_vars}")
         cmd += ["-drive", f"if=pflash,format=raw,readonly=on,file={code}"]
         cmd += ["-drive", f"if=pflash,format=raw,file={writable_vars}"]
-        cmd += ["-device", "virtio-blk-pci,drive=bootdisk"]
     else:
         cmd += ["-machine", "virt", "-cpu", "cortex-a72"]
         bios = os.environ.get("AF_ARM64_BIOS")
@@ -165,13 +166,24 @@ def build_command(args) -> List[str]:
         else:
             log("AF_ARM64_BIOS is not set; using the default firmware. The ARM64 "
                 "port lands in v1.1 — see docs/AfriyieOS-Blueprint.md.")
-        cmd += ["-device", "virtio-blk-pci,drive=bootdisk"]
 
     cmd += ["-m", args.memory, "-smp", str(args.smp)]
 
     # The disk is attached as virtio: the driver at v0.3 is written against
     # virtio, so using it from v0.1 keeps the device model consistent.
     cmd += ["-drive", f"file={args.image},format=raw,if=none,id=bootdisk"]
+
+    # disable-modern=on forces the LEGACY virtio 0.9.5 interface, which presents
+    # its registers as a flat block of I/O ports in BAR0.
+    #
+    # The driver could support the modern interface instead, but doing so means
+    # parsing PCI vendor-specific capabilities to find where the registers are —
+    # and the registers themselves are identical either way. Starting legacy and
+    # adding modern discovery later is a smaller, testable step than doing both
+    # at once. Making the flag explicit here means the driver's assumption is
+    # stated rather than accidental: without it, QEMU presents a transitional
+    # device and which interface wins depends on the driver's probe order.
+    cmd += ["-device", "virtio-blk-pci,drive=bootdisk,disable-modern=on"]
 
     # Input devices, present from v0.1 so the v0.5 driver work has something to
     # bind to without changing the run configuration.

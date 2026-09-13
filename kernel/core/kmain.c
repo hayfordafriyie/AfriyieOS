@@ -35,6 +35,9 @@
 #include "afriyie/heap.h"
 #include "afriyie/thread.h"
 #include "afriyie/sched.h"
+#include "afriyie/pci.h"
+#include "afriyie/block.h"
+#include "afriyie/virtio_blk.h"
 
 // Defined at the bottom of this file. Declared here because kmain creates the
 // idle thread before the definition appears.
@@ -295,6 +298,23 @@ void kmain(af_boot_info_t *boot_info)
 
     af_marker("AF_SCHED_READY");
 
+    // -------------------------------------------------------------------------
+    // 11. Devices
+    //
+    // PCI enumeration comes first, then the storage driver claims the disk the
+    // system booted from. Both are non-fatal: a machine with no PCI bus or no
+    // virtio disk still boots, and says so.
+    // -------------------------------------------------------------------------
+    pci_init();
+    pci_dump_devices();
+    af_marker("AF_PCI_READY");
+
+    rc = virtio_blk_init();
+    if (af_status_err(rc)) {
+        af_warn("boot", "no usable block device (%s) — continuing without "
+                        "storage", af_status_name(rc));
+    }
+
     // Interrupts have been off since the boot bridge called `cli`. The timer
     // tick, and therefore all preemption, needs them on — and so does the idle
     // `hlt` loop, which would otherwise stop the CPU permanently with no way to
@@ -305,6 +325,9 @@ void kmain(af_boot_info_t *boot_info)
     af_sched_selftest();
 
     sched_dump_state();
+
+    // The v0.3 acceptance test: read sector 0 from a real disk.
+    virtio_blk_selftest();
 
     // -------------------------------------------------------------------------
     // Idle

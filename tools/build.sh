@@ -132,13 +132,21 @@ Keep the entry stub in the .text.boot section placed first by the linker script.
         ok "kernel_entry at 0x100000 (matches the boot bridge jump target)"
     fi
 
-    # Kernel size budget (blueprint section 14).
+    # Kernel size budget.
+    #
+    # The budget was 64 KiB through v0.2 and this milestone broke it at 68 807
+    # bytes. The blueprint's own rule is that a broken budget does not merge
+    # unless an ADR explains why the budget was wrong — see ADR-011 in
+    # docs/AfriyieOS-Blueprint.md, which raises it to 128 KiB and records what
+    # actually changed and how the figure should come back down.
     if command -v x86_64-elf-size >/dev/null; then
         TEXT_SIZE=$(x86_64-elf-size -A "$BUILD_DIR/kernel.elf" | awk '/^\.text/ {print $2}')
-        if [ "${TEXT_SIZE:-0}" -gt 65536 ]; then
-            die "kernel .text is ${TEXT_SIZE} bytes, over the 64 KiB budget"
+        if [ "${TEXT_SIZE:-0}" -gt 131072 ]; then
+            die "kernel .text is ${TEXT_SIZE} bytes, over the 128 KiB budget set
+by ADR-011. Either reduce it or extend the ADR with the new figure and the
+reason — do not simply raise the number here."
         fi
-        ok "kernel .text    $TEXT_SIZE bytes (budget 65536)"
+        ok "kernel .text    $TEXT_SIZE bytes (budget 131072, ADR-011)"
     fi
 fi
 
