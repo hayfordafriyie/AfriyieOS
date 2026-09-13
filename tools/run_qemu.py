@@ -45,6 +45,8 @@ BOOT_MARKERS = [
 EXPECTED_MARKERS = [
     "AF_GDT_READY",
     "AF_IDT_READY",
+    "AF_PMM_READY",
+    "AF_HEAP_READY",
     "AF_TEST_OK",
     "AF_BOOT_OK",
 ]

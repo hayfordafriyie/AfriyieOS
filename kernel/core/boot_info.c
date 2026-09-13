@@ -171,6 +171,36 @@ af_paddr af_boot_info_max_address(const af_boot_info_t *bi)
     return max;
 }
 
+af_paddr af_boot_info_max_usable_address(const af_boot_info_t *bi)
+{
+    af_paddr max = 0;
+
+    if (bi == NULL) {
+        return 0;
+    }
+
+    for (af_u32 i = 0; i < bi->memory_region_count; i++) {
+        const af_memory_region_t *r = &bi->memory_regions[i];
+
+        // Only regions the PMM may ever allocate from. A device window at 1 TiB
+        // does not need a bitmap bit, and giving it one costs 512 times the
+        // metadata a 2 GiB machine actually needs.
+        if (r->type != AF_MEM_USABLE && r->type != AF_MEM_BOOTLOADER) {
+            continue;
+        }
+
+        af_paddr end = r->base + r->length;
+        if (end > max) {
+            max = end;
+        }
+    }
+
+    // Fall back to the overall maximum if the map somehow describes no usable
+    // memory at all — pmm_init will reject it a moment later with a clear error
+    // rather than a divide by zero.
+    return (max != 0) ? max : af_boot_info_max_address(bi);
+}
+
 const af_memory_region_t *af_boot_info_find_region(const af_boot_info_t *bi,
                                                    af_paddr addr)
 {

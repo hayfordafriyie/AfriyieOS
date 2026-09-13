@@ -31,6 +31,8 @@
 #include "afriyie/hal.h"
 #include "afriyie/arch_hooks.h"
 #include "afriyie/kstring.h"
+#include "afriyie/pmm.h"
+#include "afriyie/heap.h"
 
 // -----------------------------------------------------------------------------
 // Recovery path
@@ -152,6 +154,30 @@ void kmain(af_boot_info_t *boot_info)
     if (af_status_err(rc)) {
         boot_failed(rc, "CPU initialisation (GDT/IDT)");
     }
+
+    // -------------------------------------------------------------------------
+    // 4. Memory subsystem
+    //
+    // The PMM comes first and needs nothing but the boot handoff. It marks every
+    // frame used, frees what the map says is usable, then re-reserves the kernel
+    // image, the boot-info backup, its own metadata and the framebuffer.
+    //
+    // The kernel heap sits on top of it and is the only way anything else
+    // allocates memory. Serial first, memory second: a failure in here is
+    // otherwise invisible.
+    // -------------------------------------------------------------------------
+    rc = pmm_init(boot_info);
+    if (af_status_err(rc)) {
+        boot_failed(rc, "physical memory manager initialisation");
+    }
+    af_marker("AF_PMM_READY");
+    pmm_dump_stats();
+
+    rc = heap_init();
+    if (af_status_err(rc)) {
+        boot_failed(rc, "kernel heap initialisation");
+    }
+    af_marker("AF_HEAP_READY");
 
     // -------------------------------------------------------------------------
     // 5. Framebuffer

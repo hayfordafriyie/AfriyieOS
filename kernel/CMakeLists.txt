@@ -19,6 +19,9 @@ set(AF_KERNEL_SOURCES
     core/font8x16.c
     core/splash.c
     core/selftest.c
+    # --- v0.2: memory subsystem ---
+    core/pmm.c
+    core/heap.c
 )
 
 # -----------------------------------------------------------------------------
@@ -87,11 +90,26 @@ target_link_options(afriyieos_kernel PRIVATE
 )
 
 # The flat binary the boot bridge loads.
+#
+# --set-section-flags .bss=alloc,load,contents makes objcopy MATERIALISE .bss as
+# zeros in the file. Without it, `-O binary` silently omits NOBITS sections, the
+# resulting kernel.bin stops at the end of .data, and the boot bridge reports a
+# kernel size that excludes .bss.
+#
+# That is not a cosmetic discrepancy. The PMM reserves the kernel using the size
+# the bridge reports, so an under-reported size means it frees the kernel's own
+# .bss and hands it out. On the first v0.2 boot that overwrote the PMM's own
+# bitmap pointer and produced a general protection fault three calls away from
+# the cause. pmm_init also independently reserves the kernel's full extent from
+# the linker symbols; these two fixes are deliberately redundant, because the
+# failure mode is silent memory corruption.
 add_custom_command(TARGET afriyieos_kernel POST_BUILD
-    COMMAND ${CMAKE_OBJCOPY} -O binary
+    COMMAND ${CMAKE_OBJCOPY}
+            --set-section-flags .bss=alloc,load,contents
+            -O binary
             $<TARGET_FILE:afriyieos_kernel>
             ${CMAKE_BINARY_DIR}/kernel.bin
-    COMMENT "Producing flat kernel binary"
+    COMMENT "Producing flat kernel binary (with .bss materialised)"
     VERBATIM)
 # -----------------------------------------------------------------------------
 # Size budget (blueprint section 14): .text must stay under 64 KiB.

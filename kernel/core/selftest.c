@@ -15,6 +15,8 @@
 #include "afriyie/kstring.h"
 #include "afriyie/boot_info.h"
 #include "afriyie/fb.h"
+#include "afriyie/pmm.h"
+#include "afriyie/heap.h"
 
 static af_u32 s_passed = 0;
 static af_u32 s_failed = 0;
@@ -364,6 +366,14 @@ void af_selftest_run_all(void)
     test_formatting();
     test_boot_info_validation();
     test_framebuffer();
+
+    // v0.2: the memory subsystem runs its own tests, which are written as
+    // panicking assertions rather than as returned results. That is deliberate —
+    // a bitmap allocator or slab heap that is broken corrupts memory far from
+    // the cause, so the only useful failure mode is to stop immediately with
+    // the reason printed.
+    pmm_selftest();
+    heap_selftest();
 
     if (s_failed == 0) {
         af_info("test", "%u checks passed", s_passed);

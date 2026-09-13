@@ -85,14 +85,25 @@ failures=()
 
 # -----------------------------------------------------------------------------
 # C
+#
+# Compiled to an object file with -c, NOT with -fsyntax-only.
+#
+# -fsyntax-only is faster but it stops after parsing and semantic analysis, so
+# it never runs the whole-translation-unit passes that report -Wunused-function,
+# -Wunused-variable and similar. A static function that no longer has a caller
+# therefore passes this check and fails the real build — which is exactly what
+# happened with pmm.c's mark_range_used. A check that predicts the build must
+# actually do what the build does.
 # -----------------------------------------------------------------------------
 check_c() {
     local file="$1"; shift
     [ "$VERBOSE" = 1 ] && printf '  cc   %s\n' "$file"
 
+    local obj="/tmp/af-check-$(echo "$file" | tr '/' '_').o"
     local err
-    if err=$("$CC" "$@" -fsyntax-only "$file" 2>&1); then
+    if err=$("$CC" "$@" -c "$file" -o "$obj" 2>&1); then
         c_ok=$((c_ok + 1))
+        rm -f "$obj"
     else
         c_fail=$((c_fail + 1))
         failures+=("$file")

@@ -21,6 +21,104 @@ Lesson:     the generalisable part
 
 ---
 
+## 2025 — Entries from v0.2 development
+
+### The PMM freed the kernel's own `.bss`
+
+**Milestone:** v0.2
+**Symptom:** a general protection fault inside `pmm_alloc_frames`, reading the
+bitmap. The register dump showed `rax = 0x1818181818181818` — a fill pattern the
+heap self test had just written — as the value of `s_bitmap`.
+**Cause:** the boot bridge reports the size of the **flat binary** it copied, and
+`objcopy -O binary` does not emit NOBITS sections. So `kernel_phys_size` covered
+`.text`, `.rodata` and `.data`, and silently omitted `.bss` — 111 KiB of real
+memory that the kernel was using at that moment. `pmm_init` reserved only the
+reported range, the free pass released the rest, and the heap then allocated the
+kernel's own `.bss` and filled it with a test pattern.
+**Fix:** two deliberately redundant ones. `objcopy` now materialises `.bss` with
+`--set-section-flags .bss=alloc,load,contents`, so the reported size is honest;
+and `pmm_init` independently reserves the kernel's full extent from the linker's
+`__kernel_start`/`__kernel_end` symbols, taking whichever figure is larger.
+**Found by:** resolving `0x1068fe` with `nm` to `pmm_alloc_frames+0x85`, then
+disassembling to see it was `movzbl (%rax),%edx` — a read through the corrupted
+`s_bitmap`.
+**Lesson:** the crash was three function calls from the cause, which is how
+allocator bugs behave. Two things made it findable at all: the panic dump printed
+every register, and `tools/resolve_addr.sh` turned an address into a symbol. Also
+worth noting: **two complementary fixes, not one.** Either alone would have
+worked; the failure mode is silent corruption, and redundancy is cheap here.
+
+---
+
+### The frame bitmap was sized from the highest address in the map
+
+**Milestone:** v0.2
+**Symptom:** none — it booted. But the log said `managing 268435456 frames
+(1048576 MiB) with 294912 KiB of metadata` on a machine with 2 GiB of RAM, and
+only 448 952 frames were free.
+**Cause:** `pmm_init` sized the bitmap from `af_boot_info_max_address()`, the
+highest address anywhere in the firmware's memory map. Firmware routinely
+describes device and reserved windows far above RAM — QEMU's map reaches **1 TiB**
+on a 2 GiB machine — so the bitmap covered 1 TiB of address space that can never
+be allocated from. 32 MiB of bitmap plus 256 MiB of refcounts: **288 MiB of
+metadata, 14% of the machine**, and initialisation loops walking 268 million
+frames.
+**Fix:** `af_boot_info_max_usable_address()`, which considers only regions the PMM
+may ever allocate from. Metadata fell from 288 MiB to 576 KiB, free memory rose
+from 448 952 to 522 509 frames — **287 MiB recovered** — and the largest
+contiguous free run went from 1713 MiB to 2001 MiB.
+**Found by:** reading the log numbers and noticing that "1 TiB" and "2 GiB" were
+in the same line. Nothing failed; the figures were simply absurd, and absurd
+figures in a boot log are worth stopping for.
+**Lesson:** "it works" is not the same as "it is right". A sizing bug that wastes
+14% of RAM and makes every scan 500× longer passes every functional test. The
+habit that catches it is reading your own output critically rather than just
+checking that it appeared.
+
+---
+
+### A header's own last field was overwritten by the offset used to find it
+
+**Milestone:** v0.2
+**Symptom:** `heap self test: large allocation reports 16 usable bytes` for a
+100 KiB allocation.
+**Cause:** large allocations kept their header at the start of the block and
+stored, in the four bytes immediately below the returned pointer, the distance
+back to that header — so `kfree` could find it with one subtraction. When the
+allocation is not alignment-shifted, that distance *is* `sizeof(header)`, and
+those same four bytes are where the header's **last field** lives. Storing the
+offset overwrote `requested` with the value 16.
+**Fix:** the trailer is now at a fixed offset (`sizeof(large_trailer_t)`) before
+the user pointer and records the block base directly. No offset field, no
+arithmetic that can collide with the thing it describes.
+**Found by:** the self test checking `kmalloc_usable_size` against what was
+requested. Both figures were in the failure message, which is what made the
+"16" immediately recognisable as `sizeof(header)`.
+**Lesson:** writing bookkeeping into the very bytes it is meant to describe is
+the kind of mistake that compiles cleanly, reads as clever, and destroys data
+later. Prefer a fixed offset to a computed one whenever the fixed one is
+available.
+
+---
+
+### `compile_check.sh` used `-fsyntax-only` and missed `-Wunused-function`
+
+**Milestone:** v0.2 (tooling)
+**Symptom:** the compile check reported all 18 files clean; the real cross build
+then failed on `mark_range_used defined but not used`.
+**Cause:** `-fsyntax-only` stops after parsing and semantic analysis and never
+runs the whole-translation-unit passes that report unused functions and
+variables.
+**Fix:** the check now compiles to an object with `-c`, exactly as the build
+does. It costs a fraction of a second more and predicts the build instead of
+approximating it.
+**Found by:** the tool disagreeing with the compiler, which is the only thing
+that makes a pre-flight check worth having.
+**Lesson:** a check that predicts the build must actually perform the build's
+work. An approximation that passes when the build fails trains you to ignore it.
+
+---
+
 ## 2025 — Entries from v0.1 development
 
 ### `EFI_SYSTEM_TABLE` was packed, so `ConOut` was read from the wrong offset

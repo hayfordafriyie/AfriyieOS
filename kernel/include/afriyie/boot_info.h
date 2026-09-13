@@ -218,6 +218,17 @@ af_u64 af_boot_info_usable_bytes(const af_boot_info_t *bi);
 // Highest physical address present in the map (used to size the PMM bitmap).
 af_paddr af_boot_info_max_address(const af_boot_info_t *bi);
 
+// Highest address the PMM could ever hand out: the end of the highest region
+// that is USABLE or BOOTLOADER-reclaimable.
+//
+// This is the right figure for sizing the frame bitmap, and it is very different
+// from af_boot_info_max_address(). Firmware memory maps routinely describe
+// device and reserved windows far above RAM — QEMU's map tops out at 1 TiB on a
+// 2 GiB machine. Sizing from the overall maximum produced a 32 MiB bitmap and a
+// 256 MiB refcount array for 2 GiB of RAM: 288 MiB of metadata, and initialisation
+// loops that walked 268 million frames that can never be allocated.
+af_paddr af_boot_info_max_usable_address(const af_boot_info_t *bi);
+
 // Finds the memory region containing `addr`, or NULL.
 const af_memory_region_t *af_boot_info_find_region(const af_boot_info_t *bi,
                                                    af_paddr addr);
