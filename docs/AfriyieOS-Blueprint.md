@@ -913,7 +913,15 @@ Run `./tools/verify_all.sh` — 7 of 7 checks pass.
 - [x] Write `tools/mkimage.py` — assemble ESP (FAT32) disk image with `BOOTX64.EFI`
 - [x] Write `tools/run_qemu.py` — one command to build + boot + attach serial
 - [x] Write `tools/verify_image.py` — independent structural verifier (35 checks) ✅ **verified**
-- [x] CI: `.github/workflows/ci.yml` builds and boots in QEMU, greps serial for the boot markers
+- [~] CI: `.github/workflows/ci.yml` builds and boots in QEMU, greps serial for the boot markers
+      — **unticked until it is seen green.** This box was ticked at v0.1 on the
+      strength of the workflow file existing. It has never passed: every run
+      since v0.3 was red on the first step of the first job, and the
+      build-and-boot job was *skipped* on all of them, so the pipeline had never
+      once run the kernel. Seven separate faults were found and fixed after v0.5
+      (see `docs/debug-log.md`). The box goes back to `[x]` when a run is green,
+      and not before — a ticked box for a job that has never executed is exactly
+      the kind of claim this file is supposed to be free of.
 - [x] **Commit & push** 🚩
 
 #### 0.1.2 UEFI boot bridge (`boot/uefi/`)

@@ -53,28 +53,29 @@ Quit QEMU with **Ctrl-A then X**.
 
 ## 3. Before you push
 
-Run these. CI runs the same things, and finding a failure locally is much faster.
+Run this. It runs everything CI runs, in the same order:
 
 ```bash
-# Host tests — fast, no cross-compiler needed
-python3 -m unittest discover -s tests/host -v
-
-# Build, with warnings as errors
-cmake --build build/x86_64
-
-# Kernel size against the 64 KiB .text budget
-cmake --build build/x86_64 --target kernel-size
-
-# Package and verify the image
-python3 tools/mkimage.py --arch x86_64 --build-dir build/x86_64 \
-        --output build/x86_64/afriyieos.img
-python3 tools/verify_image.py --image build/x86_64/afriyieos.img \
-        --expect "EFI/BOOT/BOOTX64.EFI:build/x86_64/boot/BOOTX64.EFI"
-
-# Boot it and assert the markers
-python3 tools/run_qemu.py --arch x86_64 \
-        --image build/x86_64/afriyieos.img --test --timeout 90
+./tools/verify_all.sh
 ```
+
+There used to be a hand-written list of commands here, and it drifted from what
+CI actually did — which is how four separate failures sat in the pipeline for
+four milestones while `verify_all.sh` reported green. One command, one list.
+
+The individual steps, if you want them:
+
+```bash
+./tools/pycompat.py                       # tooling syntax vs the CI interpreter
+python3 -m unittest discover -s tests/host -v
+./tools/compile_check.sh
+./tools/link_check.sh
+./tools/build.sh                          # also enforces the .text budget
+./tools/boottest.sh                       # boots the packaged image
+```
+
+For the edit-test loop between changes, `./tools/dev-cycle.sh` is faster: it
+compiles, builds, boots and prints the markers without the full suite.
 
 ---
 
@@ -84,12 +85,12 @@ python3 tools/run_qemu.py --arch x86_64 \
 | --- | --- |
 | See the boot log | `--serial stdio` (the interactive default) |
 | Break early | `run_qemu.py ... --debug` — halts at reset, GDB stub on `:1234` |
-| Attach GDB | `gdb -ex 'target remote :1234' build/x86_64/kernel` |
+| Attach GDB | `gdb -ex 'target remote :1234' build/x86_64/kernel.elf` |
 | Screenshot | QEMU monitor: `screendump shot.ppm` |
 | Inject input | QEMU monitor: `sendkey a`, `mouse_move 100 200`, `mouse_button 1` |
 | Inspect the image | `python3 tools/verify_image.py --image <img>` |
 | Kernel memory map | `build/x86_64/kernel.map` |
-| Section sizes | `x86_64-elf-size -A build/x86_64/kernel` |
+| Section sizes | `x86_64-elf-size -A build/x86_64/kernel.elf` |
 
 **When a boot hangs with no output**, bisect. It is the only technique that always
 works: comment out half the boot path, see which half, repeat. Guessing at a
@@ -232,7 +233,7 @@ The budgets in blueprint §14 are gates, not aspirations:
 
 | Metric | Budget |
 | --- | --- |
-| Kernel `.text` | < 64 KB (enforced in CI) |
+| Kernel `.text` | < 128 KB (ADR-011; target 64 KB again once drivers leave Ring 0). One source of truth: `tools/budgets.sh` |
 | Context switch | < 1 000 cycles |
 | IPC round trip | < 2 000 cycles |
 | Null syscall | < 300 cycles |
@@ -242,6 +243,12 @@ The budgets in blueprint §14 are gates, not aspirations:
 If a change breaks a budget, it does not merge — unless the change is
 accompanied by an ADR explaining why the budget was wrong. "It got slow" is a
 bug report, not a trade-off.
+
+**The size number lives in `tools/budgets.sh` and nowhere else.** It used to be
+written out twice, in `tools/build.sh` and in the CI workflow, and when ADR-011
+raised it only the local copy changed — CI went on enforcing 64 KiB, unnoticed
+because an unrelated failure meant that job never ran. If you need a different
+figure, change it there and say why in an ADR.
 
 ---
 
