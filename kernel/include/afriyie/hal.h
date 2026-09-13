@@ -129,6 +129,14 @@ af_u32 hal_query_flags(hal_pt_root_t root, af_vaddr va);
 void hal_set_page_table(hal_pt_root_t root);
 hal_pt_root_t hal_get_page_table(void);
 
+// Builds the kernel's own page tables and installs them.
+//
+// Until this runs the kernel is executing on whatever page tables the firmware
+// left behind. That works by accident — the firmware's identity map happens to
+// cover us — but the kernel does not own its address space and cannot create a
+// second one, which is what user mode needs.
+void hal_paging_init(const af_boot_info_t *bi);
+
 // The identity/direct map installed at boot: kernel virtual → physical.
 af_paddr hal_virt_to_phys(af_vaddr va);
 af_vaddr hal_phys_to_virt(af_paddr pa);

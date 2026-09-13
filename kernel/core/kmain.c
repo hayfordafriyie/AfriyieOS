@@ -186,6 +186,20 @@ void kmain(af_boot_info_t *boot_info)
     af_marker("AF_HEAP_READY");
 
     // -------------------------------------------------------------------------
+    // 4a. Paging
+    //
+    // The kernel has been executing on the page tables OVMF left behind since
+    // ExitBootServices. They happen to identity-map everything we touch, which
+    // is why nothing has broken — but the kernel does not own its address space
+    // and cannot create a second one, so user mode is impossible until this runs.
+    //
+    // It needs the PMM to allocate tables, and it must run before anything
+    // depends on a mapping the firmware happened to provide.
+    // -------------------------------------------------------------------------
+    hal_paging_init(boot_info);
+    af_marker("AF_PAGING_READY");
+
+    // -------------------------------------------------------------------------
     // 5. Framebuffer
     // -------------------------------------------------------------------------
     rc = af_fb_init(&boot_info->framebuffer);

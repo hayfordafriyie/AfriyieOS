@@ -956,13 +956,29 @@ Evidence: [releases/evidence/v0.2.0-scheduler.txt](releases/evidence/v0.2.0-sche
 - [ ] `pmm`/`vmm` unit tests (map at `0xDEADB000`, write, read back, unmap, assert #PF) — *needs the VMM*
 - [ ] 1 000 thread create/exit cycles with no frame leak — *next*
 
+#### 0.2.5 Virtual memory and paging
+- [x] Page-table structures: `PML4 → PDPT → PD → PT` with 4 KiB pages
+- [x] `hal_pt_create()`, `hal_pt_destroy()`, `hal_map_page()`, `hal_map_range()`, `hal_unmap_page()`, `hal_translate()`, `hal_query_flags()`
+- [x] **The kernel owns its page tables.** Until this landed the kernel was executing on the tables OVMF left behind after `ExitBootServices` — they happened to identity-map everything we touched, which is why nothing broke, but the kernel could not rely on any mapping existing and could not create a second address space at all
+- [x] Boot-time bootstrap: 3 GiB identity map with 2 MiB pages, sized from the PMM *and* the framebuffer, which sits above the PMM's range
+- [x] Portable `HAL_*` mapping flags translated to architecture bits, with `NX` inverted correctly (absent execute permission *sets* the bit)
+- [x] Second independent address space created and destroyed, with its mappings provably not leaking into the kernel's — the foundation user mode is built on
+- [x] TLB invalidation after every mapping change
+- [x] Test: map a frame above 4 GiB, write through it, verify translation and contents, unmap, verify the mapping is gone, and verify a second address space is independent
+- [x] Physical direct map at `0xFFFF_8000_0000_0000` — *the constant and the conversion helpers exist; the mapping itself lands with the higher-half move*
+- [ ] Higher-half kernel: relocate to `0xFFFF_FFFF_8000_0000` (`-mcmodel=kernel` + linker script + bootstrap stub)
+- [ ] Demand paging groundwork (page fault → allocate → map → retry) — used by the `v0.4` ELF loader
+- [ ] Guard pages around kernel stacks (unmapped page → clean #PF instead of silent corruption)
+
 **✅ Acceptance criteria met:** two kernel threads printing `A` and `B` in a fair
 alternating pattern, with memory statistics stable afterwards.
 
-**Remaining for v0.2:** the **VMM and the higher-half kernel move**, which are
-inseparable — a higher-half image faults on its first instruction fetch without
-paging — so they land in one commit together with a boot-time page-table
-bootstrap. Everything else in this milestone is done and verified.
+**Remaining for v0.2:** the **higher-half kernel relocation**. The VMM, paging,
+and second address spaces are done — what is left is moving the kernel image
+itself from its identity-mapped 1 MiB home into the top 2 GiB, which needs
+`-mcmodel=kernel`, a VMA≠LMA linker script, and a bootstrap stub that builds the
+higher-half mapping before the jump. It is deliberately one commit, because a
+partially-converted kernel faults on its first instruction fetch.
 
 **Goal:** manage physical RAM, own the address space, switch between threads.
 

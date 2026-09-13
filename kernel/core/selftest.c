@@ -21,6 +21,10 @@
 #include "afriyie/sched.h"
 #include "afriyie/spinlock.h"
 
+#if AF_TARGET_X86_64
+#include "../arch/x86_64/x86_64.h"
+#endif
+
 static af_u32 s_passed = 0;
 static af_u32 s_failed = 0;
 
@@ -652,6 +656,10 @@ void af_selftest_run_all(void)
     // the reason printed.
     pmm_selftest();
     heap_selftest();
+
+    // v0.2 paging: mapping, translation, unmapping, and a second independent
+    // address space.
+    af_paging_selftest();
 
     if (s_failed == 0) {
         af_info("test", "%u checks passed", s_passed);

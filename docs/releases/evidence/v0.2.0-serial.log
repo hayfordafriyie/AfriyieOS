@@ -5,7 +5,7 @@ AfriyieOS 0.1.0 (Seed) UEFI boot bridge
 --------------------------------------------------------------
   watchdog disabled
   GOP: 1280x800 pitch 5120
-  kernel: 217 KiB loaded at 0x100000
+  kernel: 229 KiB loaded at 0x100000
 
 AfriyieOS 0.1.0 (Seed) booting
 [    0.000000] INFO  boot  : ==============================================================
@@ -15,7 +15,7 @@ AfriyieOS 0.1.0 (Seed) booting
 [    0.000000] INFO  boot  : boot flags      : 0x3
 [    0.000000] INFO  boot  : cpus            : 1
 [    0.000000] INFO  boot  : firmware page   : 4096 bytes
-[    0.000000] INFO  boot  : kernel phys     : 0x100000 (217 KiB)
+[    0.000000] INFO  boot  : kernel phys     : 0x100000 (229 KiB)
 [    0.000000] INFO  boot  : ramdisk         : none
 [    0.000000] INFO  boot  : debug uart      : 0x3F8 @ 115200 baud (clk 0 Hz, shift 0)
 [    0.000000] INFO  boot  : framebuffer     : 0x80000000  1280x800  32 bpp  pitch 5120  RGBX8888
@@ -25,8 +25,8 @@ AfriyieOS 0.1.0 (Seed) booting
 [    0.000000] INFO  boot  :   [ 0] 0x00000000000 - 0x00000086FFF       540 KiB  usable
 [    0.000000] INFO  boot  :   [ 1] 0x00000087000 - 0x00000087FFF         4 KiB  bootloader
 [    0.000000] INFO  boot  :   [ 2] 0x00000088000 - 0x0000009FFFF        96 KiB  usable
-[    0.000000] INFO  boot  :   [ 3] 0x00000100000 - 0x00000136FFF       220 KiB  bootloader
-[    0.000000] INFO  boot  :   [ 4] 0x00000137000 - 0x000007FFFFF      6948 KiB  usable
+[    0.000000] INFO  boot  :   [ 3] 0x00000100000 - 0x00000139FFF       232 KiB  bootloader
+[    0.000000] INFO  boot  :   [ 4] 0x0000013A000 - 0x000007FFFFF      6936 KiB  usable
 [    0.000000] INFO  boot  :   [ 5] 0x00000800000 - 0x00000807FFF        32 KiB  acpi-nvs
 [    0.000000] INFO  boot  :   [ 6] 0x00000808000 - 0x0000080AFFF        12 KiB  usable
 [    0.000000] INFO  boot  :   [ 7] 0x0000080B000 - 0x0000080BFFF         4 KiB  acpi-nvs
@@ -35,9 +35,9 @@ AfriyieOS 0.1.0 (Seed) booting
 [    0.000000] INFO  boot  :   [10] 0x00000900000 - 0x0000177FFFF     14848 KiB  bootloader
 [    0.000000] INFO  boot  :   [11] 0x00001780000 - 0x0007BB6BFFF   2002864 KiB  usable
 [    0.000000] INFO  boot  :   [12] 0x0007BB6C000 - 0x0007BB8BFFF       128 KiB  bootloader
-[    0.000000] INFO  boot  :   [13] 0x0007BB8C000 - 0x0007DE10FFF     35348 KiB  usable
-[    0.000000] INFO  boot  :   [14] 0x0007DE11000 - 0x0007DE5CFFF       304 KiB  bootloader
-[    0.000000] INFO  boot  :   [15] 0x0007DE5D000 - 0x0007DE95FFF       228 KiB  usable
+[    0.000000] INFO  boot  :   [13] 0x0007BB8C000 - 0x0007DE0AFFF     35324 KiB  usable
+[    0.000000] INFO  boot  :   [14] 0x0007DE0B000 - 0x0007DE59FFF       316 KiB  bootloader
+[    0.000000] INFO  boot  :   [15] 0x0007DE5A000 - 0x0007DE95FFF       240 KiB  usable
 [    0.000000] INFO  boot  :   [16] 0x0007DE96000 - 0x0007E50BFFF      6616 KiB  bootloader
 [    0.000000] INFO  boot  :   [17] 0x0007E50C000 - 0x0007E6E9FFF      1912 KiB  bootloader
 [    0.000000] INFO  boot  :   [18] 0x0007E6EA000 - 0x0007E6EAFFF         4 KiB  usable
@@ -153,16 +153,19 @@ AfriyieOS 0.1.0 (Seed) booting
 [    0.000000] INFO  pmm   : usable: 522700 frames (2041 MiB)
 [    0.000000] INFO  pmm   : reserved 1 frame(s) at 0x0 for null page
 [    0.000000] INFO  pmm   : reserved 1 frame(s) at 0x7000 for boot_info backup
-[    0.000000] INFO  pmm   : reserved 55 frame(s) at 0x100000 for kernel image (.text .rodata .data .bss)
+[    0.000000] INFO  pmm   : reserved 58 frame(s) at 0x100000 for kernel image (.text .rodata .data .bss)
 [    0.000000] INFO  pmm   : reserved 144 frame(s) at 0x1780000 for pmm metadata
-[    0.000000] INFO  pmm   : ready: 522499 frames free of 522700 usable (2041 MiB available)
+[    0.000000] INFO  pmm   : ready: 522496 frames free of 522700 usable (2041 MiB available)
 [    0.000000] INFO  boot  : AF_PMM_READY
-[    0.000000] INFO  pmm   : frames  : 524020 total, 522499 free, 1521 used
+[    0.000000] INFO  pmm   : frames  : 524020 total, 522496 free, 1524 used
 [    0.000000] INFO  pmm   : memory  : 1.99 GiB free of 2046 MiB total
 [    0.000000] INFO  pmm   : largest free run: 512303 frames (2001 MiB)
 [    0.000000] INFO  pmm   : metadata: 63 KiB bitmap + 511 KiB refcounts
 [    0.000000] INFO  heap  : slab allocator ready: 8 classes from 16 to 2048 bytes, large allocations from 2048 bytes
 [    0.000000] INFO  boot  : AF_HEAP_READY
+[    0.000000] INFO  paging: extending the identity map past the PMM's range to cover the framebuffer at 0x80000000..0x803E8000
+[    0.000000] INFO  paging: kernel page tables installed: identity map of 3 GiB with 2 MiB pages (3 PD tables), CR3 = 0x1000
+[    0.000000] INFO  boot  : AF_PAGING_READY
 [    0.000000] INFO  fb    : framebuffer ready: 1280x800, 32 bpp, pitch 5120, format RGBX8888
 [    0.000000] INFO  splash: drew desktop layout on 1280x800
 [    0.000000] INFO  boot  : AF_FB_READY
@@ -255,31 +258,36 @@ AfriyieOS 0.1.0 (Seed) booting
 [    0.000000] DEBUG test  :   ok   fuzz: 50069 allocations, 49931 frees, 138 live
 [    0.000000] DEBUG test  :   ok   100 000-operation fuzz leaves no leak
 [    0.000000] DEBUG test  :   ok   heap_check: slabs, free lists and guard bands are intact
+[    0.000000] DEBUG test  :   ok   mapped 0xFFFF800000000000 -> 0x1E05000, wrote and read back through it
+[    0.000000] DEBUG test  :   ok   unmapped 0xFFFF800000000000; translation is gone
+[    0.000000] DEBUG test  :   ok   unmap of an unmapped page returns ERR_NOENT; re-mapping works
+[    0.000000] DEBUG test  :   ok   a second address space holds its own mappings independently
+[    0.000000] DEBUG test  :   ok   the second address space was destroyed and its frames released
+[    0.000000] INFO  boot  : AF_VMM_OK
 [    0.000000] INFO  test  : 71 checks passed
 [    0.000000] INFO  boot  : AF_TEST_OK
 [    0.000000] INFO  boot  : AfriyieOS 0.1.0 ready — kernel is alive
 [    0.000000] INFO  boot  : AF_BOOT_OK
 [    0.000000] INFO  thread: adopted the boot context as tid 1 'boot'
-[    0.000000] INFO  thread: created tid 2 'idle': 16 KiB stack at 0x1E17000, priority 7
+[    0.000000] INFO  thread: created tid 2 'idle': 16 KiB stack at 0x1E42000, priority 7
 [    0.000000] INFO  sched : round-robin scheduler ready: 8 priority levels, 2 tick slice at 100 Hz
 [    0.000000] INFO  timer : PIT channel 0: requested 100 Hz, divisor 11931, actual 100 Hz
 [    0.000000] INFO  irq   : IRQ0 handler registered (1 total on this line)
 [    0.000000] INFO  boot  : AF_TIMER_READY
 [    0.000000] INFO  boot  : AF_SCHED_READY
-[    0.010000] INFO  test  : scheduler acceptance test: two threads, 200 iterations each
-[    0.030000] INFO  sched : idle thread running (tid 2)
-[    0.040000] INFO  thread: created tid 3 'alpha': 16 KiB stack at 0x1E3A000, priority 4
-[    0.050000] INFO  thread: created tid 4 'beta': 16 KiB stack at 0x1E3E000, priority 4
-[    0.080000] INFO  thread: tid 3 'alpha' exiting after 0 ticks and 201 switches
-[    0.100000] INFO  thread: tid 4 'beta' exiting after 0 ticks and 201 switches
-[    0.100000] DEBUG test  :   ok   both threads ran to completion (200 iterations each; waited 1 ticks)
-[    0.100000] INFO  test  :   first 72 entries: ABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABAB
-[    0.100000] DEBUG test  :   ok   399 A/B transitions, longest run 1 — strict round-robin
-[    0.100000] INFO  thread: created tid 5 'spinner': 16 KiB stack at 0x1E4A000, priority 4
-[    0.210000] DEBUG test  :   ok   preemption: a non-yielding thread was interrupted (13860194 iterations counted while the boot thread slept)
-[    0.220000] INFO  thread: tid 5 'spinner' exiting after 7 ticks and 4 switches
-[    0.240000] DEBUG test  :   ok   an exited thread was reaped and removed from the table
-[    0.240000] INFO  boot  : AF_SCHED_OK
-[    0.240000] INFO  sched : 24 ticks, 418 context switches, 2 live threads
-[    0.240000] INFO  sched :   run queue priority 7: 1 thread(s)
-[    0.240000] INFO  sche
+[    0.020000] INFO  sched : idle thread running (tid 2)
+[    0.040000] INFO  test  : scheduler acceptance test: two threads, 200 iterations each
+[    0.080000] INFO  thread: created tid 3 'alpha': 16 KiB stack at 0x1E46000, priority 4
+[    0.120000] INFO  thread: created tid 4 'beta': 16 KiB stack at 0x1E52000, priority 4
+[    0.160000] INFO  thread: tid 3 'alpha' exiting after 0 ticks and 201 switches
+[    0.180000] INFO  thread: tid 4 'beta' exiting after 0 ticks and 201 switches
+[    0.180000] DEBUG test  :   ok   both threads ran to completion (200 iterations each; waited 1 ticks)
+[    0.180000] INFO  test  :   first 72 entries: ABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABAB
+[    0.180000] DEBUG test  :   ok   399 A/B transitions, longest run 1 — strict round-robin
+[    0.180000] INFO  thread: created tid 5 'spinner': 16 KiB stack at 0x1E56000, priority 4
+[    0.290000] DEBUG test  :   ok   preemption: a non-yielding thread was interrupted (13466012 iterations counted while the boot thread slept)
+[    0.300000] INFO  thread: tid 5 'spinner' exiting after 7 ticks and 4 switches
+[    0.350000] DEBUG test  :   ok   an exited thread was reaped and removed from the table
+[    0.350000] INFO  boot  : AF_SCHED_OK
+[    0.350000] INFO  sched : 35 ticks, 425 context switches, 2 live threads
+[    0.350000] INFO  sc

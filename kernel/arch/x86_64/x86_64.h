@@ -9,6 +9,7 @@
 
 #include "afriyie/types.h"
 #include "afriyie/status.h"   // af_status_t, the return type of the init entry points
+#include "afriyie/boot_info.h" // af_boot_info_t, for the paging bootstrap
 
 // =============================================================================
 // Serial console (COM1)
@@ -29,6 +30,24 @@ void  af_x86_pit_tick(void);      // called from the IRQ0 handler
 af_u64 af_x86_pit_ticks(void);
 af_u32 af_x86_pit_hz(void);
 af_u64 af_x86_time_ns(void);
+
+// =============================================================================
+// Paging
+// =============================================================================
+
+// Builds the kernel's own page tables and installs them (writes CR3).
+// Requires the PMM. Until this runs, the kernel is executing on the page tables
+// the firmware left behind after ExitBootServices.
+void af_x86_paging_bootstrap(const af_boot_info_t *bi);
+
+// The page-table root currently installed.
+af_paddr af_x86_current_page_table(void);
+
+// Maps a frame at a virtual address outside the identity map, writes through it,
+// verifies the translation, unmaps and verifies the mapping is gone. Also
+// proves a second address space holds its own mappings independently — which is
+// what user mode is built on.
+void af_paging_selftest(void);
 
 #define AF_COM1_PORT 0x3F8
 

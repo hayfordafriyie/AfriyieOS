@@ -322,3 +322,10 @@ af_u32 hal_cpu_count(void)
     af_x86_cpu_detect(&cpu);
     return (cpu.logical_cpus > 0) ? cpu.logical_cpus : 1;
 }
+
+// Paging bootstrap. Declared in hal.h; implemented in arch/x86_64/paging.c,
+// because the page-table walk is architecture-specific and must not leak upward.
+void hal_paging_init(const af_boot_info_t *bi)
+{
+    af_x86_paging_bootstrap(bi);
+}

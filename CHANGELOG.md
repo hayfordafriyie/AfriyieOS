@@ -149,6 +149,35 @@ committed under [docs/releases/evidence/](docs/releases/evidence/).
 - The ARM64 phone port is scheduled for v1.1 by ADR-007, so the HAL is validated
   on one architecture before being duplicated
 
+#### Virtual memory and paging (`v0.2`)
+
+- **The kernel owns its own page tables.** Until this landed it was executing on
+  the tables OVMF left behind after `ExitBootServices`. They happened to
+  identity-map everything we touched, which is why nothing had broken — but the
+  kernel could not rely on any mapping existing, could not create a second
+  address space, and had no way to enforce a protection boundary. User mode is
+  impossible without this.
+- **Four-level page-table walk** — `PML4 → PDPT → PD → PT`, with intermediate
+  tables allocated on demand and huge pages refused rather than silently
+  overwritten.
+- **Boot-time bootstrap** — a 3 GiB identity map using 2 MiB pages, sized from
+  the PMM *and* the framebuffer. The framebuffer sits at `0x80000000`, above the
+  highest address the PMM manages, so sizing from the PMM alone would have left
+  it unmapped and the first pixel drawn after the switch would have faulted.
+- **Portable mapping flags** translated to architecture bits, with `NX` inverted
+  correctly: absent execute permission *sets* the bit. Getting that backwards
+  makes every non-executable page executable, and nothing functional would ever
+  reveal it.
+- **Second address spaces** — created, mapped into, and destroyed, with the test
+  proving a mapping in one does not appear in the other. This is the machinery
+  user mode is built on.
+- **TLB invalidation** after every mapping change, and `hal_unmap_page` walks
+  without allocating, so unmapping something unmapped fails cleanly instead of
+  leaking page tables.
+- **Self test** maps a frame above 4 GiB, writes through it, verifies both the
+  translation and the contents, unmaps, verifies the mapping is gone, verifies
+  unmapping twice returns `ERR_NOENT`, and verifies re-mapping works.
+
 ---
 
 ## Milestone index

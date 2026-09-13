@@ -40,6 +40,7 @@ if(AF_TARGET STREQUAL "x86_64")
         arch/x86_64/gdt.c
         arch/x86_64/idt.c
         arch/x86_64/timer.c
+        arch/x86_64/paging.c
         arch/x86_64/arch.c
     )
 
