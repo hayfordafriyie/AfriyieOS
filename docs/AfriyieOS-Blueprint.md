@@ -879,11 +879,27 @@ of what will **not** work are in
 | **v0.7** | Exec server as a user-space service; personalities become IPC servers | An unrecognised file produces a clear "no personality" error, not a panic | — |
 | **v0.7** | Capability transfer between processes (the reply path currently carries an endpoint ID rather than a transferred capability) | An endpoint capability handed from a server to a client, verified across two processes | — |
 | **v0.8** | Linux syscall translator | A real static `busybox` runs; its output is asserted | — |
-| **v0.9** | Package readers: deb, rpm, pacman, apk | Host tests parse real packages from each ecosystem | — |
+| **v0.9** | Package readers: deb, rpm, pacman, apk | Host tests parse real packages from each ecosystem | 🔨 **deb container done** — see below |
+| **v0.9a** | **DEFLATE (fixed + dynamic Huffman) and Zstandard** | A real `dpkg-deb` package reads | — |
 | **v1.0** | Installer, AFS versioned store, AppImage | Install a real package, reboot, run it | — |
 | **v1.3** | PE loader + Win32 API subset | A real Win32 console program runs | — |
 | **v1.4** | Android: DEX/ART + APK install | An APK with a native activity runs | — |
 | **v2.x** | Flatpak, Snap, MSI, container formats | — | — |
+
+> **What real packages turned out to require, measured rather than assumed.**
+> A package built by `dpkg-deb` was fed to the new reader, and the answer moved
+> a milestone's worth of work into the plan:
+>
+> * **Zstandard, not gzip, is what current Debian and Ubuntu packages use.**
+>   `dpkg-deb` now emits `control.tar.zst` and `data.tar.zst` by default. Every
+>   example of a .deb written down for years is a gzip one; the format changed
+>   underneath the documentation.
+> * **Full DEFLATE is required even for the gzip case.** `dpkg-deb -Zgzip`
+>   produces Huffman-coded blocks, and the current inflater deliberately handles
+>   only stored blocks — it refuses rather than producing wrong bytes.
+>
+> Both refusals are precise and name the exact gap. The evidence is committed at
+> `docs/releases/evidence/v0.9.0-real-deb-boundary.txt`. See v0.9a above.
 
 **The ordering is the plan.** Linux first, because its ABI is documented, finite
 and stable, and because `musl` and `busybox` give a small dependency-free target

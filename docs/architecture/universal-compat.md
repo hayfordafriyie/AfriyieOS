@@ -153,6 +153,15 @@ piece of work.
 
 ### 3.3 The package manager
 
+> **Measured at v0.6, and it changed the plan.** A real `dpkg-deb` package,
+> built on this machine and fed to the new reader, says two things the
+> documentation does not: modern Debian and Ubuntu packages are **Zstandard**
+> (`control.tar.zst`, `data.tar.zst` by default), and the gzip ones that older
+> packages use need **full DEFLATE** — Huffman-coded blocks, not just stored
+> ones. Both are now their own milestone rather than an assumption inside this
+> one. Evidence: `docs/releases/evidence/v0.9.0-real-deb-boundary.txt`.
+
+
 One tool, many back ends. A package is a *description of files and dependencies*,
 and every ecosystem's format is a container for that description:
 
