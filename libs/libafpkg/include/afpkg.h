@@ -191,11 +191,21 @@ af_status_t afpkg_ar_find_control(const af_u8 *data, af_size len,
                                   const af_u8 **out, af_size *out_len,
                                   const char **why);
 
-// Inflates a gzip stream into `out`. Handles stored DEFLATE blocks; returns
-// AF_ERR_NOTSUP for Huffman-coded ones rather than producing wrong bytes.
+// Inflates a gzip stream into `scratch`.
+//
+// Handles all three DEFLATE block types — stored, fixed Huffman and dynamic
+// Huffman — with LZ77 back-references. That is the full format as RFC 1951
+// defines it and it is what makes real packages readable.
 af_status_t afpkg_gunzip(const af_u8 *data, af_size len,
                          afpkg_scratch_t scratch, af_size *out_len,
                          const char **why);
+
+// The raw DEFLATE layer, exposed because it is independently testable and
+// because gzip is a wrapper around it rather than the thing itself. A bug in the
+// wrapper and a bug in the encoder should not be attributable to each other.
+af_status_t afpkg_inflate(const af_u8 *data, af_size len,
+                          af_u8 *out_base, af_size out_size,
+                          af_size *out_len, const char **why);
 
 // Iterates a tar archive held in memory.
 af_status_t afpkg_tar_next(const af_u8 *data, af_size len, af_size *cursor,

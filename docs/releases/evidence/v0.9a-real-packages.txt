@@ -1,0 +1,71 @@
+libafpkg against packages dpkg itself built
+===========================================
+
+The fixtures in build/fixtures are generated (see tools/pkgsynth.py for
+why). These are not: they are built by dpkg-deb on this machine, and they
+are what decides whether the reader works on a real distribution's
+archive or only on data we wrote ourselves.
+
+Three compressions, because dpkg offers all three and they are three
+different formats rather than three settings of one.
+
+--- dpkg-deb -Zgzip: READ ---
+  member: debian-binary
+  member: control.tar.gz
+  member: data.tar.gz
+  812 bytes -> status 0
+  reason : read as a Debian package
+  name   : real-deb-test
+  version: 0.9.1
+  arch   : amd64
+  depends: libc6 (>= 2.31), libfoo | libbar
+  descr  : built by dpkg-deb, not by pkgsynth A second line, to prove the continuation rule works on a real package.
+  dir   (0 bytes, mode 0755)
+  dir  usr/ (0 bytes, mode 0755)
+  dir  usr/bin/ (0 bytes, mode 0755)
+  file usr/bin/real-deb-test (20 bytes, mode 0755)
+  dir  usr/share/ (0 bytes, mode 0755)
+  dir  usr/share/doc/ (0 bytes, mode 0755)
+  dir  usr/share/doc/real-deb-test/ (0 bytes, mode 0755)
+  file usr/share/doc/real-deb-test/README (14 bytes, mode 0644)
+
+--- dpkg-deb -Zxz: refused, by name ---
+  member: debian-binary
+  member: control.tar.xz
+  member: data.tar.xz
+  956 bytes -> status -8
+  reason : control member uses a compression this build does not support (only control.tar and control.tar.gz are handled)
+
+--- dpkg-deb default (Zstandard): refused, by name ---
+  member: debian-binary
+  member: control.tar.zst
+  member: data.tar.zst
+  750 bytes -> status -8
+  reason : control member uses a compression this build does not support (only control.tar and control.tar.gz are handled)
+
+--- the generated fixture, for comparison ---
+  8432 bytes -> status 0
+  reason : read as a Debian package
+  name   : afriyie-test
+  version: 1.2.3-1
+  arch   : amd64
+  depends: libc6 (>= 2.31), libfoo | libbar
+  descr  : a synthetic package used by the AfriyieOS test suite This package is generated, never downloaded. It exists so that the reader can be tested against a container it did not also write.
+  dir  usr/ (0 bytes, mode 0755)
+  dir  usr/bin/ (0 bytes, mode 0755)
+  file usr/bin/afriyie-test (46 bytes, mode 0755)
+  file usr/share/doc/afriyie-test/README (21 bytes, mode 0644)
+  file usr/share/doc/afriyie-test/copyright (4 bytes, mode 0644)
+
+WHAT THIS ESTABLISHES
+  A .deb built by dpkg with gzip compression is read in full: name,
+  version, architecture, dependencies, the multi-line description, and
+  every file with its mode. That needed the complete DEFLATE
+  implementation — stored, fixed-Huffman and dynamic-Huffman blocks —
+  because dpkg's output uses all of them.
+
+WHAT REMAINS
+  Zstandard and xz. Both are refused by name rather than misread, which
+  is why the failures above say exactly what is missing. xz is a
+  different algorithm entirely; zstd is a different family. Neither is a
+  variation of what is implemented.

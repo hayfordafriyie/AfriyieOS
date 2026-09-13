@@ -26,15 +26,6 @@
 //
 // Six one-line functions is a smaller cost than any of those dependencies.
 // -----------------------------------------------------------------------------
-static void afpkg_memcpy(void *dst, const void *src, af_size n)
-{
-    af_u8 *d = (af_u8 *)dst;
-    const af_u8 *s = (const af_u8 *)src;
-    for (af_size i = 0; i < n; i++) {
-        d[i] = s[i];
-    }
-}
-
 static void afpkg_memset(void *dst, int value, af_size n)
 {
     af_u8 *d = (af_u8 *)dst;
@@ -368,62 +359,29 @@ af_status_t afpkg_gunzip(const af_u8 *data, af_size len,
         return AF_ERR_INVAL;
     }
 
-    af_size produced = 0;
-
-    while (true) {
-        if (!region_ok(data, len, at, 1)) {
-            *why = "gzip stream ended before the final block";
-            return AF_ERR_FS_CORRUPT;
-        }
-
-        const af_u8 header = data[at++];
-        const af_u8 final = (af_u8)(header & 0x01u);
-        const af_u8 type = (af_u8)((header >> 1) & 0x03u);
-
-        if (type != 0) {
-            *why = "gzip stream uses Huffman-coded blocks, which this build "
-                   "does not inflate (only stored blocks are handled)";
-            return AF_ERR_NOTSUP;
-        }
-
-        if (!region_ok(data, len, at, 4)) {
-            *why = "stored block header is truncated";
-            return AF_ERR_FS_CORRUPT;
-        }
-
-        const af_size blen = (af_size)data[at] | ((af_size)data[at + 1] << 8);
-        const af_size nlen = (af_size)data[at + 2] | ((af_size)data[at + 3] << 8);
-        at += 4;
-
-        // LEN and NLEN are ones-complements of each other. Checking is how a
-        // stream that has slipped out of alignment is caught here rather than
-        // producing silently wrong output.
-        if ((blen ^ nlen) != 0xFFFFu) {
-            *why = "stored block LEN and NLEN are not ones-complements";
-            return AF_ERR_FS_CORRUPT;
-        }
-
-        if (!region_ok(data, len, at, blen)) {
-            *why = "stored block runs past the end of the stream";
-            return AF_ERR_FS_CORRUPT;
-        }
-
-        if (produced + blen > scratch.size) {
-            *why = "decompressed data does not fit the scratch buffer";
-            return AF_ERR_TOOMANY;
-        }
-
-        afpkg_memcpy(scratch.base + produced, data + at, blen);
-        produced += blen;
-        at += blen;
-
-        if (final) {
-            break;
-        }
+    // The DEFLATE payload sits between the header just parsed and the 8-byte
+    // trailer. Handing the whole remainder to the inflater would let it run into
+    // the CRC and length and, on a corrupt stream, decode them as data — so the
+    // bounds are tightened here rather than trusted downstream.
+    if (at + 8 > len) {
+        *why = "gzip stream is too short to contain its trailer";
+        return AF_ERR_FS_CORRUPT;
     }
 
-    *out_len = produced;
-    *why = "inflated from stored blocks";
+    *out_len = 0;
+    const af_status_t rc = afpkg_inflate(data + at, len - at - 8,
+                                         scratch.base, scratch.size,
+                                         out_len, why);
+    if (af_status_err(rc)) {
+        return rc;
+    }
+
+    // The trailer's CRC32 and ISIZE are deliberately NOT verified yet, and that
+    // is stated rather than implied. Doing it needs a CRC32 implementation,
+    // which is its own small piece of work; until then a stream that inflates to
+    // the wrong bytes is caught by the caller comparing lengths, and a
+    // bit-flipped stream that still inflates is not caught at all.
+    *why = "inflated";
     return AF_OK;
 }
 

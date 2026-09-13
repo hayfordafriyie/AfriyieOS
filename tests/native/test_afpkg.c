@@ -332,6 +332,7 @@ static void test_layers(const char *dir)
     // --- gzip ----------------------------------------------------------------
     afpkg_scratch_t scratch = { s_scratch, sizeof(s_scratch) };
     af_size inflated = 0;
+    af_size huff_len = 0;
 
     rc = afpkg_gunzip(control, control_len, scratch, &inflated, &why);
     check(rc == AF_OK, "the gzip stream inflates");
@@ -339,29 +340,32 @@ static void test_layers(const char *dir)
     // A tar archive is a whole number of 512-byte blocks.
     check_u64(inflated % 512, 0, "the inflated length is a whole tar block count");
 
-    // A Huffman-coded stream must be REFUSED, not garbled. Constructed by hand
-    // so the test does not depend on zlib producing one at a particular level.
+    // A Huffman-coded stream now DECODES, so the assertion that it is refused is
+    // gone — it was testing the absence of the feature, and the feature arrived.
     //
-    // It is padded to a full-length gzip header PLUS the 8-byte trailer, because
-    // the first version of this test was 11 bytes and the reader correctly
-    // refused it for being too short — before it ever looked at the block type.
-    // A test that fails for the wrong reason is indistinguishable from a test
-    // that fails for the right one, so the length has to be honest.
-    unsigned char huffman[20] = {
+    // What replaces it is the case that still matters: a stream whose Huffman
+    // tables are corrupt must be REJECTED, not decoded into plausible nonsense.
+    // 0x05 is a final dynamic block whose header claims 257+31 literal codes and
+    // then runs out of bits.
+    unsigned char bad_huffman[] = {
         0x1F, 0x8B, 0x08, 0x00, 0, 0, 0, 0, 0x00, 0x03,
-        0x05,                       // BFINAL=1, BTYPE=10 (dynamic Huffman)
-        0, 0, 0, 0, 0, 0, 0, 0,     // the rest is never reached; the block
-    };                              // type is refused first
-    rc = afpkg_gunzip(huffman, sizeof(huffman), scratch, &inflated, &why);
-    check(rc == AF_ERR_NOTSUP,
-          "a Huffman-coded gzip stream is refused with AF_ERR_NOTSUP");
+        0x05, 0xFF, 0x07, 0x00, 0, 0, 0, 0, 0, 0,
+    };
+    rc = afpkg_gunzip(bad_huffman, sizeof(bad_huffman), scratch, &huff_len, &why);
+    check(rc != AF_OK, "a corrupt Huffman stream is rejected");
 
     // ...and a stream that is genuinely too short is refused for THAT reason,
     // which keeps the two failures distinguishable.
-    rc = afpkg_gunzip(huffman, 11, scratch, &inflated, &why);
+    rc = afpkg_gunzip(bad_huffman, 11, scratch, &huff_len, &why);
     check(rc == AF_ERR_INVAL, "a gzip stream shorter than its header is invalid");
 
     // --- tar -----------------------------------------------------------------
+    //
+    // `inflated` is untouched above, deliberately. The first version of this
+    // test reused one variable for the control archive's inflated length and for
+    // the throwaway streams, so a later section silently set it to zero and the
+    // tar walk below counted no entries — a failure with no visible connection
+    // to the line that caused it.
     af_size cursor = 0;
     af_pkg_entry_t entry;
     const af_u8 *contents = NULL;
@@ -396,6 +400,172 @@ static void test_layers(const char *dir)
 }
 
 // =============================================================================
+// 4. DEFLATE
+//
+// THE TEST THAT MATTERS MOST IN THIS FILE. A decompressor that produces output
+// has proved nothing — wrong bytes look exactly like right bytes until they are
+// compared — so every case here compares the inflated result with the exact
+// original, byte for byte, and reports the first offset that differs.
+//
+// The vectors are 6 payloads x 10 compression levels, and the payloads are
+// chosen to reach the three block types and the parts of the length/distance
+// tables a single string would never touch. See tools/pkgsynth.py.
+// =============================================================================
+static void test_deflate(const char *dir)
+{
+    printf("\n=== DEFLATE ===\n");
+
+    static const char *const payloads[] = {
+        "empty", "one", "constant", "text", "random", "distances"
+    };
+    const int payload_count = (int)(sizeof(payloads) / sizeof(payloads[0]));
+
+    int vectors = 0;
+    int mismatched_vectors = 0;
+
+    for (int p = 0; p < payload_count; p++) {
+        // The expected output.
+        char raw_name[256];
+        snprintf(raw_name, sizeof(raw_name), "%s/deflate_%s.raw", dir, payloads[p]);
+
+        FILE *raw_file = fopen(raw_name, "rb");
+        if (raw_file == NULL) {
+            printf("  missing vector %s\n", raw_name);
+            s_failures++;
+            continue;
+        }
+
+        fseek(raw_file, 0, SEEK_END);
+        long raw_len = ftell(raw_file);
+        fseek(raw_file, 0, SEEK_SET);
+
+        unsigned char *raw = malloc((size_t)raw_len + 1);
+        if (fread(raw, 1, (size_t)raw_len, raw_file) != (size_t)raw_len) {
+            fclose(raw_file);
+            free(raw);
+            s_failures++;
+            continue;
+        }
+        fclose(raw_file);
+
+        int payload_mismatches = 0;
+        const char *first_failure = NULL;
+
+        for (int level = 0; level <= 9; level++) {
+            char gz_name[256];
+            snprintf(gz_name, sizeof(gz_name), "%s/deflate_%s.%d.gz",
+                     dir, payloads[p], level);
+
+            FILE *gz_file = fopen(gz_name, "rb");
+            if (gz_file == NULL) {
+                s_failures++;
+                printf("  missing vector %s\n", gz_name);
+                continue;
+            }
+
+            fseek(gz_file, 0, SEEK_END);
+            long gz_len = ftell(gz_file);
+            fseek(gz_file, 0, SEEK_SET);
+
+            unsigned char *gz = malloc((size_t)gz_len);
+            if (fread(gz, 1, (size_t)gz_len, gz_file) != (size_t)gz_len) {
+                fclose(gz_file);
+                free(gz);
+                s_failures++;
+                continue;
+            }
+            fclose(gz_file);
+
+            vectors++;
+
+            afpkg_scratch_t scratch = { s_scratch, sizeof(s_scratch) };
+            af_size out_len = 0;
+            const char *why = "";
+
+            const af_status_t rc = afpkg_gunzip(gz, (af_size)gz_len, scratch,
+                                                &out_len, &why);
+            if (rc != AF_OK) {
+                s_failures++;
+                payload_mismatches++;
+                if (first_failure == NULL) first_failure = why;
+                printf("  FAIL  %s level %d: refused — %s\n", payloads[p], level, why);
+                free(gz);
+                continue;
+            }
+
+            if (out_len != (af_size)raw_len) {
+                s_failures++;
+                payload_mismatches++;
+                printf("  FAIL  %s level %d: length %lu, expected %ld\n",
+                       payloads[p], level, (unsigned long)out_len, raw_len);
+                free(gz);
+                continue;
+            }
+
+            if (memcmp(s_scratch, raw, (size_t)raw_len) != 0) {
+                // Report the FIRST differing offset. "The bytes differ" is not
+                // actionable; "offset 4096" points straight at the block
+                // boundary or table entry that is wrong.
+                af_size at = 0;
+                while (at < out_len && s_scratch[at] == raw[at]) {
+                    at++;
+                }
+                s_failures++;
+                payload_mismatches++;
+                printf("  FAIL  %s level %d: first difference at offset %lu "
+                       "(got 0x%02X, expected 0x%02X)\n",
+                       payloads[p], level, (unsigned long)at,
+                       s_scratch[at], raw[at]);
+            }
+
+            free(gz);
+        }
+
+        if (payload_mismatches == 0) {
+            printf("  ok    %-10s %ld bytes, 10 levels\n", payloads[p], raw_len);
+        }
+        if (first_failure != NULL) {
+            (void)first_failure;
+        }
+
+        mismatched_vectors += payload_mismatches;
+        free(raw);
+    }
+
+    check(mismatched_vectors == 0, "every DEFLATE vector inflates to the exact original");
+    printf("  %d vector(s) checked\n", vectors);
+
+    // --- the refusals ---------------------------------------------------------
+    afpkg_scratch_t scratch = { s_scratch, sizeof(s_scratch) };
+    af_size out_len = 0;
+    const char *why = "";
+
+    // Block type 3 is reserved. A stream containing one is corrupt, and a
+    // decoder that treats it as something else invents data.
+    unsigned char reserved[] = {
+        0x1F, 0x8B, 0x08, 0x00, 0, 0, 0, 0, 0x00, 0x03,
+        0x07, 0, 0, 0, 0, 0, 0, 0, 0,
+    };
+    check(afpkg_gunzip(reserved, sizeof(reserved), scratch, &out_len, &why)
+              == AF_ERR_FS_CORRUPT,
+          "a reserved block type is rejected as corrupt");
+
+    // A raw DEFLATE stream ending mid-symbol must be an error, not a short read.
+    // The first byte is a final dynamic block header, then nothing.
+    const unsigned char truncated[] = { 0x05, 0x00 };
+    check(afpkg_inflate(truncated, sizeof(truncated), s_scratch, sizeof(s_scratch),
+                        &out_len, &why) != AF_OK,
+          "a DEFLATE stream that ends mid-header is an error");
+
+    // An empty input is the case a loop written as `while (offset < len)` gets
+    // wrong: it produces no blocks at all and looks like success.
+    const unsigned char nothing[] = { 0x00 };
+    check(afpkg_inflate(nothing, 0, s_scratch, sizeof(s_scratch),
+                        &out_len, &why) != AF_OK,
+          "an empty DEFLATE stream is an error, not an empty result");
+}
+
+// =============================================================================
 int main(int argc, char **argv)
 {
     const char *dir = (argc > 1) ? argv[1] : "build/fixtures";
@@ -409,6 +579,7 @@ int main(int argc, char **argv)
     test_unsupported_compression(dir);
     test_no_control_file(dir);
     test_layers(dir);
+    test_deflate(dir);
 
     printf("\n===============================================================\n");
     if (s_failures == 0) {

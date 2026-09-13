@@ -21,6 +21,82 @@ Lesson:     the generalisable part
 
 ---
 
+## 2026 — Entries from the DEFLATE work
+
+### The fixtures were not DEFLATE
+
+**Milestone:** v0.9a
+**Symptom:** all sixty stored-block test vectors failed, every one with the same
+message:
+
+```
+FAIL  random level 0: refused — stored block LEN and NLEN are not ones-complements
+```
+**Cause:** the bug was in the FIXTURE GENERATOR, not the decompressor.
+
+`zlib.compress(data, level)` does not return a DEFLATE stream. It returns a ZLIB
+stream — a 2-byte header and a 4-byte Adler-32 trailer wrapped around the DEFLATE
+data. The generator wrapped that in a gzip header as though it were raw DEFLATE,
+so the decoder was handed a stream beginning `78 01` and correctly interpreted
+`0x78` as a block header: BFINAL=0, BTYPE=00, a stored block — then read the ZLIB
+header's remaining byte and the start of the actual data as LEN and NLEN, which
+are not ones-complements of each other. It refused, correctly, for a reason that
+pointed at the data rather than at the generator.
+
+`zlib.compressobj(level, zlib.DEFLATED, -15)` produces raw DEFLATE. The `-15` is
+the whole difference and it is easy to leave out.
+**Fix:** the generator uses `compressobj` with `wbits=-15`, and the file now says
+why. The decoder was correct throughout and was not changed.
+**Found by:** the byte-exact comparison. Every vector failed with an error rather
+than producing wrong output, which is the good case — but the reason named the
+LEN field, which is four bytes into a stored block, and the first instinct was to
+look at the stored-block code. Adding up what the decoder believed it was reading
+eventually pointed back at what the generator had written.
+**Lesson:** a test that compares against a fixture is testing two things and can
+only tell you that they disagree. The fixture is as much a part of the system as
+the code, and it deserves the same suspicion — especially when it was written by
+the same person in the same hour. The specific trap here is worth remembering:
+`zlib.compress` is ZLIB, not DEFLATE, and every `-15` in the documentation exists
+because of it.
+
+---
+
+### Two sections of one test shared a variable
+
+**Milestone:** v0.9a
+**Symptom:** after the DEFLATE work landed, two unrelated-looking checks failed:
+
+```
+FAIL  a Huffman-coded gzip stream is refused with AF_ERR_NOTSUP
+FAIL  the control tar holds two entries
+```
+**Cause:** two separate mistakes.
+
+The first was an OBsolete assertion. That test asserted the absence of a feature
+— "Huffman-coded blocks are refused" — which was true and correct when written
+and became false the moment the feature arrived. A test written against a
+limitation has to be revisited when the limitation is lifted, and nothing
+prompts that revisiting except the test failing, which is at least honest.
+
+The second was state clobbering. `test_layers` used one variable, `inflated`, for
+the control archive's decompressed length AND for the length produced by two
+throwaway streams further down. The obsolete Huffman test overwrote it, so the
+tar walk that ran afterwards was handed a length of zero and counted no entries.
+The two failures looked unrelated and were one cause.
+**Fix:** the throwaway streams write to their own variable, and the obsolete
+assertion is replaced by a real one — a corrupt Huffman stream must be REJECTED
+rather than decoded into plausible nonsense, which is the property that still
+needs defending.
+**Found by:** the two failures appearing together, and the realisation that the
+second could not possibly be affected by the first unless something was shared.
+**Lesson:** a test function with mutable state used across sections is a test
+where changing one section can break another, and the failure will point at the
+section that ran last. The fix is not to be careful; it is to give each section
+its own variables, so the failure points at the line that caused it. And: when a
+test asserts that something is NOT supported, it has an expiry date.
+
+---
+
 ## 2026 — Entries from the IPC work
 
 ### The message structure did not add up to the size it was documented at

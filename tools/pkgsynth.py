@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import random
 import struct
 import zlib
 
@@ -285,6 +286,98 @@ FIXTURES = {
 }
 
 
+# =============================================================================
+# DEFLATE test vectors
+#
+# A decompressor is the one kind of code where "it produced output" means
+# nothing: wrong bytes look exactly like right bytes until they are compared.
+# So every vector is an input, its compressed form, and the EXACT bytes that
+# must come back.
+#
+# The payloads are chosen to exercise the parts of DEFLATE that a single test
+# string would miss:
+#
+#   empty       the case a loop written as `while offset < len` gets wrong
+#   constant    long runs — the best case for LZ77, so the densest back-references
+#   text        mixed literals and matches, the ordinary case
+#   random      INCOMPRESSIBLE, so the compressor emits stored blocks and any
+#               implementation that only handles Huffman fails here
+#   distances   data engineered so matches reach distances at each code boundary,
+#               which is where the distance table's extra bits are got wrong
+#
+# Every level from 0 to 9 is generated, because zlib switches strategies as the
+# level rises — level 0 is stored, low levels lean on fixed Huffman, high levels
+# on dynamic. One level would test one of the three block types.
+# =============================================================================
+
+def deflate_payloads() -> dict[str, bytes]:
+    rng = random.Random(0xA6F1)          # fixed seed: the vectors must not move
+
+    text = (
+        b"The quick brown fox jumps over the lazy dog. " * 8
+        + b"AfriyieOS reads packages from every distribution.\n" * 4
+    )
+
+    # Distances engineered to cross the extra-bit boundaries of the distance
+    # table: 1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, ... A match at each of
+    # these exercises a different row of dist_base/dist_extra, and a table with
+    # one wrong entry produces correct output for most data and wrong output for
+    # exactly one of these.
+    distances = bytearray()
+    seed = b"ABCDEFGH"
+    for dist in (1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193):
+        distances += seed * 40
+        distances += bytes([0x40 + (dist & 0x3F)]) * 8
+        distances += distances[-dist:][:dist]
+
+    return {
+        "empty": b"",
+        "one": b"x",
+        "constant": b"a" * 40000,
+        "text": text,
+        "random": bytes(rng.randrange(256) for _ in range(20000)),
+        "distances": bytes(distances[:60000]),
+    }
+
+
+def write_deflate_vectors(out_dir: str) -> None:
+    """Writes <name>.raw and <name>.gz per level for every payload.
+
+    THE RAW DEFLATE DETAIL, which the first version of this function got wrong.
+
+    `zlib.compress(data, level)` does NOT return a DEFLATE stream. It returns a
+    ZLIB stream: a 2-byte header and a 4-byte Adler-32 trailer wrapped around the
+    DEFLATE data. Wrapping that in a gzip header produces a file that `gzip -d`
+    rejects and that a correct inflater rejects too, because it starts decoding
+    the zlib header's 0x78 as a block header.
+
+    `compressobj(..., wbits=-15)` produces RAW DEFLATE, which is what a gzip
+    member actually contains. The distinction broke every stored-block vector on
+    the first run — and it was visible only because the tests compare bytes
+    rather than checking that output appeared.
+    """
+    payloads = deflate_payloads()
+
+    for name, payload in payloads.items():
+        with open(os.path.join(out_dir, f"deflate_{name}.raw"), "wb") as handle:
+            handle.write(payload)
+
+        for level in range(10):
+            # wbits=-15: raw DEFLATE, no zlib header and no Adler trailer.
+            compressor = zlib.compressobj(level, zlib.DEFLATED, -15)
+            blob = compressor.compress(payload) + compressor.flush()
+
+            # A real gzip header, written by hand so it is deterministic. zlib's
+            # own gzip wrapper (wbits=31) stamps the current time into it, and a
+            # fixture that changes every run cannot be compared against anything.
+            stream = b"\x1f\x8b\x08\x00" + b"\x00\x00\x00\x00" + b"\x02\xff" + blob
+            stream += struct.pack("<II", zlib.crc32(payload) & 0xFFFFFFFF,
+                                  len(payload) & 0xFFFFFFFF)
+
+            with open(os.path.join(out_dir, f"deflate_{name}.{level}.gz"), "wb") as handle:
+                handle.write(stream)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--out", default=None, help="directory to write fixtures into")
@@ -303,6 +396,9 @@ def main() -> int:
         with open(path, "wb") as handle:
             handle.write(data)
         print(f"  {name}: {len(data)} bytes")
+
+    write_deflate_vectors(args.out)
+    print(f"  deflate vectors: {len(deflate_payloads())} payloads x 10 levels")
 
     return 0
 
