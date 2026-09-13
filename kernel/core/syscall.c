@@ -59,6 +59,9 @@ static af_u64 s_syscall_by_number[AF_SYS_MAX];
 // The thread that ran the most recent ring-3 code, so sys_exit can terminate it.
 static af_thread_t *s_user_thread = NULL;
 
+// AF_USER_OK is a one-shot marker. See the comment at its emission site.
+static bool s_user_ok_emitted = false;
+
 af_u64 usermode_syscall_count(void)
 {
     return s_syscall_count;
@@ -185,7 +188,15 @@ static af_i64 syscall_dispatch(af_u64 number, af_u64 a1, af_u64 a2, af_u64 a3,
         // made system calls, and asked to terminate. The marker is emitted here
         // rather than from the test's own code because the test never regains
         // control — its final act is this call.
-        if (s_syscall_count >= 3) {
+        //
+        // Emitted once, for the FIRST user thread to exit. Two ring-3 contexts
+        // run at boot now: the built-in stub, then init loaded off the disk.
+        // Without this guard the second exit would print AF_USER_OK again, and
+        // the boot log would suggest the stub had run twice rather than that
+        // two different tests had each passed. init's own exit is evidenced by
+        // AF_EXEC_RAN, which its code prints before calling this.
+        if (s_syscall_count >= 3 && !s_user_ok_emitted) {
+            s_user_ok_emitted = true;
             af_marker("AF_USER_OK");
             af_info("syscall", "%llu system calls handled from ring 3",
                     (unsigned long long)s_syscall_count);
@@ -274,10 +285,25 @@ void usermode_dump_stats(void)
 //
 // A program that ran in pages the kernel had already mapped for itself would
 // prove nothing about isolation.
+//
+// WHY 8 GiB AND NOT 4: the ELF loader places real programs at 4 GiB (they are
+// linked there — see libs/libaf/user.lds) with a stack at 4 GiB + 1 MiB. When
+// this test used 4 GiB, init's .text segment landed on the stub's code page and
+// elf_load failed with ERR_EXIST:
+//
+//     ERROR vmm : 0x100000000 is already mapped to 0x1E59000; refusing to
+//                 remap to 0x1E6D000
+//     ERROR elf : segment 0: could not map 0x100000000 (ERR_EXIST)
+//
+// That failure is the honest shape of a real gap: there is ONE address space at
+// v0.4, shared by every user context, so two of them cannot coexist. Giving the
+// stub its own window resolves the collision without pretending the gap is
+// closed. The real fix is a page table per process, which arrives with
+// processes at v0.5 — and until then, nothing may load two programs.
 // =============================================================================
 
-#define USER_CODE_BASE   0x0000000100000000ULL   // 4 GiB
-#define USER_STACK_BASE  0x0000000100010000ULL   // 4 GiB + 64 KiB
+#define USER_CODE_BASE   0x0000000200000000ULL   // 8 GiB
+#define USER_STACK_BASE  0x0000000200010000ULL   // 8 GiB + 64 KiB
 #define USER_MESSAGE_OFFSET 128
 
 void usermode_selftest(void)

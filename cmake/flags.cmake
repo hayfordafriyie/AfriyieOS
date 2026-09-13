@@ -98,6 +98,39 @@ set(AF_USER_CXX_FLAGS ${AF_COMMON_FLAGS}
 
 set(AF_USER_C_FLAGS ${AF_COMMON_FLAGS} -std=gnu11 -mno-red-zone)
 
+# -Wa,--noexecstack marks the stack non-executable in every object. Without it
+# the linker warns that an object with no .note.GNU-stack section "implies an
+# executable stack", and an executable stack is a real hardening loss rather
+# than a cosmetic warning.
+list(APPEND AF_USER_C_FLAGS   -Wa,--noexecstack)
+list(APPEND AF_USER_CXX_FLAGS -Wa,--noexecstack)
+
+# -----------------------------------------------------------------------------
+# The large code model, x86_64 user space only.
+#
+# User programs are linked at 4 GiB, above the kernel's 3 GiB identity map, so
+# that their pages are separate from the kernel's on every level of the page
+# table rather than requiring 2 MiB kernel pages to be split.
+#
+# The default small code model cannot express that. It assumes every symbol's
+# address fits in a 32-bit absolute field, and 0x100000000 does not, so the link
+# fails with pages of:
+#
+#     relocation truncated to fit: R_X86_64_32 against `.rodata'
+#
+# -mcmodel=large materialises full 64-bit addresses instead. It costs
+# instructions per reference, which is exactly the trade this address space
+# layout is buying, and it applies to user space only — the kernel keeps the
+# small model because it lives below 2 GiB.
+#
+# Note that -mcmodel=medium would NOT do: it allows data anywhere but still
+# requires .text in the low 2 GiB, and .text is at 4 GiB too.
+# -----------------------------------------------------------------------------
+if(AF_TARGET STREQUAL "x86_64")
+    list(APPEND AF_USER_C_FLAGS   -mcmodel=large)
+    list(APPEND AF_USER_CXX_FLAGS -mcmodel=large)
+endif()
+
 if(AF_TARGET STREQUAL "aarch64")
     list(REMOVE_ITEM AF_USER_CXX_FLAGS -mno-red-zone)
     list(REMOVE_ITEM AF_USER_C_FLAGS   -mno-red-zone)

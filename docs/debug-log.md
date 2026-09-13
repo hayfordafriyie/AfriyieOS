@@ -21,6 +21,117 @@ Lesson:     the generalisable part
 
 ---
 
+## 2025 — Entries from v0.4 development
+
+### The ELF loader freed the buffer its header pointer pointed into
+
+**Milestone:** v0.4
+**Symptom:** the loader read the file correctly and printed every value correctly —
+`entry 0x100000000, 3 program header(s), ET_EXEC`, three segments with the right
+addresses, sizes and permissions, a 64 KiB stack — and then the kernel entered
+ring 3 **at address 0**:
+
+```
+INFO  elf :   entry 0x100000000, 3 program header(s), ET_EXEC
+...
+INFO  elf : entering '/INIT.ELF' at 0x0 in ring 3
+INFO  boot: AF_EXEC_PREPARED
+
+EXCEPTION: #PF page fault
+  faulting address (CR2): 0x0000000000000000
+  rip: 0x0000000000000000   cs=0x1b  (CPL 3)
+```
+**Cause:** `elf_load` reads the whole image into one `kmalloc`'d buffer and takes
+`const elf64_header_t *header = (const elf64_header_t *)image`. At the end of the
+segment loop it calls `kfree(image)` — and only *after* that, on the last line
+before returning, does it read `*out_entry = header->e_entry`. `header` points
+into freed memory.
+
+This did not fault. The heap handed the same block straight back out, the memory
+was still mapped, and the read quietly returned whatever the next allocation had
+written there. It returned 0.
+
+**Fix:** copy out everything needed from the header into locals *before* the free —
+`entry_point`, `phnum`, `phoff`, `phentsize` — and use those. The comment at the
+copy explains why, because the obvious reaction on reading it is that the copies
+are redundant.
+**Found by:** a panic dump whose `rip`, `cr2`, `rax` and every general register
+were zero except `rsp`, which was the ELF stack top. A stack pointer the loader
+had just set and an instruction pointer of zero is not a paging bug — the kernel
+had jumped to a value that came from the loader, and the only value the loader
+produced that was wrong was the entry point. The log line above the fault said
+`0x0`, which had been printed one line below a correct `0x100000000`.
+**Lesson:** in C, a pointer into a heap buffer and the lifetime of that buffer are
+two separate facts the compiler does not connect. A use-after-free that returns
+zeros is worse than one that faults: it produces a plausible-looking wrong value
+that propagates. When a function returns several fields out of a structure it is
+about to free, copy them all at the top — and when a cached value and a
+freshly-read one disagree, suspect the *second* read rather than the first.
+
+---
+
+### Two ring-3 contexts cannot share one address space
+
+**Milestone:** v0.4
+**Symptom:** the loader rejected init's first segment:
+
+```
+ERROR vmm : 0x100000000 is already mapped to 0x1E59000; refusing to remap to 0x1E6D000
+ERROR elf : segment 0: could not map 0x100000000 (ERR_EXIST)
+AFRIYIEOS KERNEL PANIC
+  reason : elf: could not load '/INIT.ELF' (ERR_EXIST)
+```
+**Cause:** the ring-3 self test builds its throwaway stub at 4 GiB, and user
+programs are *linked* at 4 GiB (see `libs/libaf/user.lds`). At v0.4 there is
+exactly one address space: `hal_get_page_table()` returns the kernel's own root,
+and every user context is mapped into it. The stub's code page was still there, so
+init's `.text` mapping collided with it.
+
+The mapping layer was right to refuse. Silently overwriting the stub's page would
+have replaced a page another live thread was executing from.
+**Fix:** move the self test to 8 GiB, and record in `syscall.c` why — the two
+windows are now disjoint, and the comment names the real gap rather than implying
+it is closed.
+**Found by:** the `ERR_EXIST` came with the address, the existing physical frame
+and the proposed one, so the collision was visible without any further
+instrumentation. The two owners were identified by grepping for the address.
+**Lesson:** this is not a bug in the loader or the mapping layer — both behaved
+correctly. It is the first symptom of the missing abstraction: **there is no
+address space per process at v0.4.** Giving the stub its own window unblocks the
+milestone without hiding anything, but nothing may load two programs until
+processes arrive at v0.5 with a page table root per process. Any future "already
+mapped" error at a program's link address should be read as this, not as a
+mapping bug.
+
+---
+
+### A fixed sleep is not a synchronisation primitive
+
+**Milestone:** v0.4
+**Symptom:** after the stub and init were given separate address windows, the boot
+reached `AF_EXEC_PREPARED` but `AF_USER_OK` went missing — and the stub's second
+`Hello from ring 3!` line never appeared, even though it had appeared in every
+previous boot.
+**Cause:** the boot thread ran the stub on a separate thread and then did
+`sched_sleep(20)` before calling `elf_exec`, on the reasoning that 200 ms is far
+longer than the stub needs. It is — *on average*. `sched_sleep(20)` returns on a
+tick boundary, and on this boot the stub was still mid-run when the boot thread
+woke. `elf_exec` then entered ring 3 from the boot thread and never returned, so
+the stub thread's exit system call never ran and `AF_USER_OK` was never emitted.
+**Fix:** wait for the actual condition instead of a duration — spin on
+`thread_by_tid(stub_tid) != NULL`, calling `sched_collect_zombies()` and
+`sched_yield()`, with a bounded iteration count that panics rather than hanging.
+`thread_by_tid` alone is not enough: reaping is what removes the entry, and the
+idle thread that normally reaps never runs while another thread is spinning, so
+the waiter has to do it itself or deadlock.
+**Found by:** the missing marker. The two-line payload the stub prints before it
+exits is what made the truncation obvious — one line instead of two said the
+thread had been cut off mid-run, not that its output had been lost.
+**Lesson:** "long enough" is a guess about a duration, and a duration is not a
+fact about the system. Anything ordered by a sleep will pass on a fast machine and
+fail under load. Wait on state, and bound the wait so that "never happens" is a
+panic with a message rather than a silent hang.
+
 ## 2025 — Entries from v0.3 development
 
 ### The virtqueue's used ring was not page-aligned
@@ -345,6 +456,9 @@ work. An approximation that passes when the build fails trains you to ignore it.
 ---
 
 ## 2025 — Entries from v0.1 development
+
+---
+
 
 ### `EFI_SYSTEM_TABLE` was packed, so `ConOut` was read from the wrong offset
 

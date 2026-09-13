@@ -672,6 +672,27 @@ def find_boot_artifact(build_dir: str) -> str:
     )
 
 
+def find_init_artifact(build_dir: str) -> str:
+    """Locates the user-space init program's ELF image.
+
+    Required, not optional. The kernel's last act at boot is to load this file
+    off the FAT32 volume and enter it in ring 3; an image built without it boots
+    to a panic. Failing the packaging step instead moves the error from a
+    several-minute QEMU run back to the place that caused it.
+    """
+    candidates = [
+        os.path.join(build_dir, "init.elf"),
+        os.path.join(build_dir, "apps", "init", "init.elf"),
+    ]
+    for candidate in candidates:
+        if os.path.isfile(candidate):
+            return candidate
+    raise SystemExit(
+        f"init.elf not found in {build_dir}. Build the user-space target first:\n"
+        f"    cmake --build {build_dir}"
+    )
+
+
 def make_image(build_dir: str, output: str, arch: str, esp_size_mb: int) -> None:
     if arch != "x86_64":
         raise SystemExit(
@@ -683,6 +704,9 @@ def make_image(build_dir: str, output: str, arch: str, esp_size_mb: int) -> None
     boot_app = find_boot_artifact(build_dir)
     boot_bytes = open(boot_app, "rb").read()
     log(f"boot application: {boot_app} ({len(boot_bytes)} bytes)")
+
+    init_app = find_init_artifact(build_dir)
+    log(f"init program: {init_app} ({os.path.getsize(init_app)} bytes)")
 
     esp_bytes = esp_size_mb * 1024 * 1024
     esp_sectors = esp_bytes // SECTOR_SIZE
@@ -708,10 +732,22 @@ def make_image(build_dir: str, output: str, arch: str, esp_size_mb: int) -> None
     # right bytes with the wrong length fails as well.
     volume.write_file("HELLO.TXT", b"Hello from disk\n")
 
+    # The v0.4 acceptance artifact: a real user program, built by the cross
+    # compiler and linked at 4 GiB, sitting in the FAT32 root as an ELF file.
+    #
+    # It is packed unmodified. Nothing here patches an entry point or relocates
+    # a segment — the kernel's ELF loader is expected to read the file the way
+    # the linker wrote it, so anything this step did would be hiding a loader
+    # bug rather than fixing one.
+    with open(init_app, "rb") as handle:
+        init_bytes = handle.read()
+    volume.write_file("INIT.ELF", init_bytes)
+
     log(f"ESP: FAT32, {volume.cluster_count} clusters, "
         f"{volume.fat_sectors} sectors per FAT")
     log(f"     wrote {EFI_FALLBACK_PATH}")
     log(f"     wrote HELLO.TXT ({len(b'Hello from disk\n')} bytes)")
+    log(f"     wrote INIT.ELF ({len(init_bytes)} bytes)")
 
     esp_image = volume.finalize()
     if len(esp_image) != esp_sectors * SECTOR_SIZE:

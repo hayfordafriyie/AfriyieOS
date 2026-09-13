@@ -66,6 +66,18 @@ EXPECTED_MARKERS = [
     "AF_FS_OK",
     "AF_USER_PREPARED",
     "AF_USER_OK",
+    # v0.4, second half. AF_USER_OK comes from the built-in ring-3 stub, which
+    # the kernel copies into a page it mapped itself. These two come from a
+    # program read off the FAT32 volume as an ELF file — a different path
+    # through the kernel, with the ELF parser, the per-segment page mapper and
+    # the FAT32 reader all in it. Both stay in the list because they fail
+    # independently: the stub passing says nothing about the loader.
+    #
+    # AF_EXEC_RAN is printed by the user program's own code, in ring 3, after
+    # its checks have passed — so it is evidence that a program ran, not merely
+    # that the kernel loaded one.
+    "AF_EXEC_PREPARED",
+    "AF_EXEC_RAN",
 ]
 
 FATAL_MARKERS = [

@@ -49,7 +49,11 @@ message(STATUS "  System proc : ${CMAKE_SYSTEM_PROCESSOR}")
 # -----------------------------------------------------------------------------
 option(AF_BUILD_BOOT       "Build the boot bridge (UEFI app / U-Boot payload)" ON)
 option(AF_BUILD_KERNEL     "Build the microkernel"                            ON)
-option(AF_BUILD_USERSPACE  "Build libs, servers, drivers and apps"            OFF)
+# ON since v0.4. It is no longer optional: the kernel's last act at boot is to
+# load INIT.ELF off the FAT32 volume and enter it in ring 3, and an image built
+# without it boots to a panic. Leaving this OFF now produces a system that
+# cannot start, which is a worse default than building the extra few KiB.
+option(AF_BUILD_USERSPACE  "Build libs, servers, drivers and apps"            ON)
 option(AF_BUILD_TESTS      "Build in-kernel and host-side tests"              ON)
 option(AF_DEBUG_BUILD      "Enable kernel debug assertions and redzones"      ON)
 option(AF_WERROR           "Treat warnings as errors"                         ON)
@@ -75,9 +79,11 @@ if(AF_BUILD_BOOT)
 endif()
 
 if(AF_BUILD_USERSPACE)
+    # Only these two exist yet. drivers/ and servers/ are declared here from the
+    # start in the blueprint, but a directory that builds nothing is worse than
+    # no directory: it suggests work that has not been done. They arrive with
+    # the user-space driver move at v0.5-v0.6.
     add_subdirectory(libs)
-    add_subdirectory(drivers)
-    add_subdirectory(servers)
     add_subdirectory(apps)
 endif()
 
@@ -99,7 +105,7 @@ add_custom_target(image
             --arch ${AF_TARGET}
             --build-dir "${CMAKE_BINARY_DIR}"
             --output "${AF_IMAGE_PATH}"
-    DEPENDS afriyieos_kernel afriyieos_boot
+    DEPENDS afriyieos_kernel afriyieos_boot afriyieos_init
     COMMENT "Packaging bootable AfriyieOS disk image for ${AF_TARGET}"
     VERBATIM)
 

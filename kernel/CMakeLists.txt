@@ -35,6 +35,7 @@ set(AF_KERNEL_SOURCES
     fs/fat32.c
     # --- v0.4: user mode and system calls ---
     core/syscall.c
+    core/elf.c
 )
 
 # -----------------------------------------------------------------------------

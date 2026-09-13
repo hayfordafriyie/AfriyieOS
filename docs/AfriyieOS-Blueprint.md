@@ -408,7 +408,7 @@ struct foo { ... }; typedef struct foo foo_t;   /* _t suffix for types */
 // Replaced: af::Vector<T>, af::String, af::HashMap<K,V>, af::UniquePtr<T>, af::Arena
 ```
 
-**The AfriyieOS C++ runtime (`libaf++`)** is a from-scratch mini-STL providing exactly what the system needs, with explicit allocation failure handling. (~3,000 lines, written during `v0.4`.)
+**The AfriyieOS C++ runtime (`libaf++`)** is a from-scratch mini-STL providing exactly what the system needs, with explicit allocation failure handling. (~3,000 lines, written during `v0.5`–`v0.6`, once there is an allocator and a process to own it.)
 
 ---
 
@@ -749,31 +749,66 @@ Frozen at `v0.4`, versioned, and never changed without a bump.
 
 ### 9.2 Syscall table
 
-| # | Name | Args | Returns | Version |
-| --- | --- | --- | --- | --- |
-| 0 | `sys_debug_write` | `buf, len` | bytes written | v0.4 |
-| 1 | `sys_exit` | `code` | *never* | v0.4 |
-| 2 | `sys_thread_create` | `entry, arg, stack, prio` | `cap THREAD` | v0.4 |
-| 3 | `sys_thread_yield` | — | 0 | v0.4 |
-| 4 | `sys_ipc_send` | `cap, msg_ptr` | 0 | v0.7 |
-| 5 | `sys_ipc_recv` | `cap, msg_ptr` | 0 | v0.7 |
-| 6 | `sys_ipc_call` | `cap, msg_ptr, reply_ptr` | 0 | v0.7 |
-| 7 | `sys_ipc_reply` | `cap, msg_ptr` | 0 | v0.7 |
-| 8 | `sys_cap_derive` | `cap, rights` | `cap` | v0.7 |
-| 9 | `sys_cap_delete` | `cap` | 0 | v0.7 |
-| 10 | `sys_cap_revoke` | `cap` | 0 | v0.7 |
-| 11 | `sys_mem_alloc` | `size, flags` | `cap FRAME` | v0.7 |
-| 12 | `sys_mem_map` | `cap, vaddr, rights` | mapped addr | v0.7 |
-| 13 | `sys_mem_unmap` | `vaddr, size` | 0 | v0.7 |
-| 14 | `sys_mem_grant` | `dst_proc, cap, vaddr, rights` | target vaddr | v0.7 |
-| 15 | `sys_irq_wait` | `cap IRQ` | irq number | v0.7 |
-| 16 | `sys_irq_ack` | `cap IRQ` | 0 | v0.7 |
-| 17 | `sys_clock_get` | `clock_id` | ns since boot | v0.6 |
-| 18 | `sys_fb_map` | `—` | `cap FRAME` + geometry | v0.6 |
-| 19 | `sys_input_read` | `evt_ptr, max` | count | v0.5 |
-| 20 | `sys_dev_claim` | `dev_id` | `cap DEVICE` | v0.5 |
-| 21 | `sys_process_spawn` | `path_cap, args` | `cap PROCESS` | v0.9 |
-| 22 | `sys_notify` | `cap NOTIFICATION, bits` | 0 | v0.8 |
+> **`docs/abi/syscalls.md` §2 is the canonical table.** It is duplicated here only
+> so the blueprint reads on its own; where the two ever disagree, the ABI document
+> wins and this one is corrected.
+>
+> Until v0.4 these two tables had **drifted**: both claimed to be the frozen
+> numbering and they assigned different numbers to the same calls (this one put
+> `sys_ipc_send` at 4, the ABI document put `sys_thread_join` there). Nothing had
+> noticed because nothing above number 5 existed yet. The numbers below are now
+> the ABI document's, which are also the ones `kernel/core/syscall.c` implements
+> — the code being the thing that would break first is what decided it.
+>
+> The numbers are **append-only**. A retired number stays reserved forever, so a
+> stale binary receives `AF_ERR_NOTSUP` rather than reaching a different call. The
+> "Implemented" column is the honest state of `kernel/core/syscall.c`; a reserved
+> number that is not implemented returns `AF_ERR_NOTSUP` today.
+
+| # | Name | Args | Returns | Planned | Implemented |
+| --- | --- | --- | --- | --- | --- |
+| 0 | `sys_debug_write` | `buf, len` | bytes written | v0.4 | **v0.4 ✓** |
+| 1 | `sys_exit` | `code` | *never* | v0.4 | **v0.4 ✓** |
+| 2 | `sys_thread_create` | `entry, arg, stack, prio` | `cap THREAD` | v0.4 | v0.5 |
+| 3 | `sys_thread_yield` | — | 0 | v0.4 | **v0.4 ✓** |
+| 4 | `sys_thread_join` | `cap THREAD` | exit code | v0.4 | v0.5 |
+| 5 | `sys_clock_get` | `clock_id` | nanoseconds | v0.6 | **v0.4 ✓** *(pulled forward — the ELF program's own tests needed a clock that was not a print)* |
+| 6 | `sys_sleep` | `ns` | 0 | v0.6 | — |
+| 7 | `sys_fb_map` | — | `cap FRAME` + geometry | v0.6 | — |
+| 8 | `sys_input_read` | `evt_ptr, max` | events read | v0.5 | — |
+| 9 | `sys_dev_claim` | `dev_id` | `cap DEVICE` | v0.5 | — |
+| 10 | `sys_ipc_send` | `cap, msg_ptr` | 0 | v0.7 | — |
+| 11 | `sys_ipc_recv` | `cap, msg_ptr` | 0 | v0.7 | — |
+| 12 | `sys_ipc_call` | `cap, msg_ptr, reply_ptr` | 0 | v0.7 | — |
+| 13 | `sys_ipc_reply` | `cap, msg_ptr` | 0 | v0.7 | — |
+| 14 | `sys_notify` | `cap, bits` | 0 | v0.8 | — |
+| 15 | `sys_wait` | `cap, mask, out_ptr` | observed bits | v0.8 | — |
+| 16 | `sys_cap_derive` | `cap, rights` | `cap` | v0.7 | — |
+| 17 | `sys_cap_delete` | `cap` | 0 | v0.7 | — |
+| 18 | `sys_cap_revoke` | `cap` | 0 | v0.7 | — |
+| 19 | `sys_mem_alloc` | `size, flags` | `cap FRAME` | v0.7 | — |
+| 20 | `sys_mem_map` | `cap, vaddr, rights` | mapped address | v0.7 | — |
+| 21 | `sys_mem_unmap` | `vaddr, size` | 0 | v0.7 | — |
+| 22 | `sys_mem_grant` | `dst_proc, cap, vaddr, rights` | target address | v0.7 | — |
+| 23 | `sys_irq_wait` | `cap IRQ` | irq number | v0.7 | — |
+| 24 | `sys_irq_ack` | `cap IRQ` | 0 | v0.7 | — |
+| 25 | `sys_process_spawn` | `path_cap, argv_ptr` | `cap PROCESS` | v0.9 | — |
+| 26 | `sys_process_wait` | `cap PROCESS` | exit code | v0.9 | — |
+
+**Entry mechanism at v0.4:** `int 0x80` through IDT vector `0x80` (DPL=3), not
+`SYSCALL`/`SYSRET`. The argument registers are identical — `rax` number, `rdi`,
+`rsi`, `rdx`, `r10`, `r8`, `r9` — so the upgrade changes the stub in
+`libs/libaf/include/af.h` and the handler prologue, and no caller and no
+numbering. It is deferred because the interrupt path was already written and
+tested at v0.4, and `SYSCALL` would have added MSR setup and a second entry path
+to debug in the same milestone that first crossed the privilege boundary.
+
+**Argument validation at v0.4 is incomplete, deliberately recorded.** Range and
+wraparound are checked, but not whether the range is *mapped*. A user pointer that
+is in range but unmapped reaches the copy and faults in kernel mode instead of
+returning an error. Fixing it means consulting the page tables, which is exactly
+what `vmm_range_has_access` in `docs/abi/syscalls.md` §3 describes and what v0.4
+does not yet have.
 
 ### 9.3 IPC message and protocol header
 
@@ -816,7 +851,7 @@ Service protocols are defined as `label` namespaces in `docs/abi/`:
 | **v0.1** | *Seed* | Boot & display | QEMU shows an AfriyieOS splash + "Hello from AfriyieOS" in framebuffer | x86_64 |
 | **v0.2** | *Roots* | Memory & multitasking | Two kernel threads print `A`/`B` alternately via preemptive scheduling | x86_64 |
 | **v0.3** | *Trunk* | Disk & file system | Read `HELLO.TXT` from a virtio disk through FAT32 and print it | x86_64 |
-| **v0.4** | *Branches* | User mode & syscalls | ELF user program calls `sys_debug_write` and exits cleanly | x86_64 |
+| **v0.4** | *Branches* | User mode & syscalls | ELF user program calls `sys_debug_write` and exits cleanly — ✅ acceptance met, processes deferred to v0.5 | x86_64 |
 | **v0.5** | *Leaves* | Drivers & input | Keyboard input echoed to screen; device enumeration works | x86_64 |
 | **v0.6** | *Bloom* | Graphics core | Colored rectangles, gradients, text and shapes rendered to framebuffer | x86_64 |
 | **v0.7** | *Fruit* | IPC & services | File system runs as a user-space server; apps talk to it via IPC | x86_64 |
@@ -1133,49 +1168,135 @@ partially-converted kernel faults on its first instruction fetch.
 
 **Goal:** the kernel stops doing everything itself. Ring 3 exists.
 
+> **Status: the privilege boundary and the ELF loader are done and verified.**
+> A program compiled by the cross compiler, linked at 4 GiB, stored in the FAT32
+> volume as `/INIT.ELF`, is read off the disk by the kernel, parsed, mapped
+> segment by segment, and entered at CPL 3 — where it runs its own checks, prints
+> `AF_EXEC_RAN`, and exits cleanly. Evidence:
+> `docs/releases/evidence/v0.4.0-exec.log`.
+>
+> **Processes are not done**, and are the reason this milestone is not closed.
+> Everything below that depends on more than one address space — `fork`, `spawn`,
+> `wait`, per-process kernel stacks, argv — is deferred to v0.5 rather than
+> faked. See the deferral note at 0.4.3.
+
 #### 0.4.1 GDT/TSS & privilege transition
-- [ ] TSS with RSP0 (kernel stack for interrupts arriving from user mode) and IST entries for #DF/#PF
-- [ ] User code/data segments with correct DPL=3
-- [ ] `enter_user_mode(entry, user_stack)` — `iretq` with a crafted frame (SS, RSP, RFLAGS, CS, RIP)
-- [ ] Per-process kernel stacks: on `syscall` entry, switch to the thread's kernel stack
+- [x] TSS with RSP0 (kernel stack for interrupts arriving from user mode)
+- [ ] IST entries for `#DF`/`#PF` — *open: a fault while handling a fault is still a
+      triple fault. Needs an IST stack per vector.*
+- [x] User code/data segments with correct DPL=3
+- [x] `af_x86_enter_user_mode(entry, user_stack)` — `iretq` with a crafted frame
+      (SS, RSP, RFLAGS, CS, RIP)
+- [x] Kernel stacks per *thread* — every `af_thread_t` owns one, and the TSS RSP0
+      is repointed on every context switch
+- [ ] Kernel stacks per *process* — *deferred with 0.4.3*
 
 #### 0.4.2 System call entry
-- [ ] x86_64: `SYSCALL`/`SYSRET` with `IA32_STAR`, `IA32_LSTAR`, `IA32_FMASK` MSR setup
-- [ ] `syscall_entry` asm stub: save user `rcx`/`r11`, swap to the kernel stack, marshal args into a `syscall_frame`
-- [ ] Dispatch table `syscall_table[AF_SYS_MAX]`, with a hard bound check on the syscall number
-- [ ] Arg validation: **every** user pointer is checked against the process's mapped regions before use (no blind dereference — this is the #1 source of kernel vulnerabilities in hobby OSes)
-- [ ] `sys_debug_write`, `sys_exit`
-- [ ] Return-value convention: `>= 0` success, negative `af_status_t` error
+- [ ] `SYSCALL`/`SYSRET` with `IA32_STAR`, `IA32_LSTAR`, `IA32_FMASK` — *deferred:
+      `int 0x80` is used instead. It costs a descriptor-table lookup and goes
+      through the interrupt path the kernel already had tested, and it carries the
+      arguments in the same registers — so this is a performance change with no
+      ABI change, and `libs/libaf/include/af.h` is the only file that has to
+      change when it lands.*
+- [x] Entry through the IDT at vector `0x80`, DPL=3, arriving on the TSS RSP0 stack
+- [x] Number bound check (`AF_SYS_MAX`) — an out-of-range number returns
+      `AF_ERR_NOTSUP` rather than indexing anything
+- [x] Arg validation: range and wraparound are checked before use
+- [ ] Arg validation: **is the range actually mapped?** — *open, and the one to fix
+      next. A user pointer that is in range but unmapped reaches the copy and takes
+      a `#PF` in kernel mode rather than returning an error. The page tables have
+      the information; the check just does not consult them yet.*
+- [x] `sys_debug_write`, `sys_exit`, `sys_yield`, `sys_clock_get`
+- [x] Return-value convention: `>= 0` success, negative `af_status_t` error
+- [x] Numbering is append-only, with retired numbers reserved
 
-#### 0.4.3 Processes
+#### 0.4.3 Processes — **not started, deferred to v0.5**
 - [ ] `struct af_process { pid; addr_space; threads; cap_table; fds; parent; exit_code; }`
 - [ ] `process_create()` clones the kernel page tables, creates a user address space
-- [ ] `process_fork()` via copy-on-write page tables (mark pages read-only, take #PF on write, copy, remap writable)
+- [ ] `process_fork()` via copy-on-write page tables
 - [ ] `sys_thread_create` spawning a user thread in the current process
-- [ ] `sys_process_spawn(path_cap, argv)` — create process from an ELF on the VFS
-- [ ] `wait`/`exit` semantics, zombie reaping, and an "init" process that never dies
+- [ ] `sys_process_spawn(path_cap, argv)`
+- [ ] `wait`/`exit` semantics, zombie reaping, an "init" process that never dies
+
+> **Why this is deferred rather than half-built.** At v0.4 there is exactly **one
+> address space**: `hal_get_page_table()` returns the kernel's own root, and every
+> user context is mapped into it. That is enough to prove the privilege boundary
+> and the loader, and it is not enough for anything else. The first two attempts
+> to run two ring-3 contexts collided at 4 GiB and produced `ERR_EXIST` from the
+> mapping layer — a correct refusal, and the honest symptom of the missing
+> abstraction (see `docs/debug-log.md`, "Two ring-3 contexts cannot share one
+> address space"). Giving the self test its own 8 GiB window unblocked v0.4. **It
+> did not close the gap, and nothing may load two programs until it does.**
+> Building `fork` before the VMM can hand out independent address spaces would
+> mean writing it twice.
 
 #### 0.4.4 ELF64 loader
-- [ ] Validate the ELF header (magic, class=64, little-endian, machine=x86_64, type=EXEC/DYN)
-- [ ] Program headers: map each `PT_LOAD` at the right vaddr with the right flags (r-x / rw-)
-- [ ] Zero the BSS portion (`p_memsz > p_filesz`)
-- [ ] Map the user stack (8 MB, with a guard page below) and put `argc/argv/envp` on it
-- [ ] Reject malformed ELFs with clear errors (overlapping segments, load address below `0x1000`, etc.)
+- [x] Validate the header: magic, class=64, little-endian, machine=x86_64,
+      type=EXEC/ET_DYN, `e_phentsize`
+- [x] Program headers: one frame per page per `PT_LOAD`, with per-segment flags
+      (r-x / r-- / rw-)
+- [x] Zero the BSS portion (`p_memsz > p_filesz`), by allocating zeroed frames
+- [x] Reject malformed ELFs: segment file ranges outside the file, `p_filesz >
+      p_memsz`, no `PT_LOAD` segments, out-of-range entry point
+- [x] 64 KiB user stack, mapped user+writable and **non-executable** (NX)
+- [ ] Guard page below the stack — *deferred: a growing stack needs demand paging.
+      At v0.4 the stack is a fixed 64 KiB region with no guard, so a stack
+      overflow writes into whatever is mapped below it.*
+- [ ] `argc`/`argv`/`envp` on the stack — *deferred: there is no process to own
+      them, and one program with no arguments needs none*
+- [ ] Overlapping-segment rejection — *the per-page mapper returns `ERR_EXIST`
+      when two segments claim the same page, so the case fails closed. It fails
+      with a mapping error rather than a loader diagnostic; worth a pre-pass.*
 
 #### 0.4.5 User-space runtime (`libs/libaf/`)
-- [ ] Syscall wrappers: `af_debug_write`, `af_exit`, `af_thread_create`, `af_yield`
-- [ ] `memset/memcpy/memmove/memcmp/strlen/strcmp/strncpy`
-- [ ] A minimal `printf` (integer, hex, string, padding, width)
-- [ ] `_start` stub in assembly that calls `main(argc, argv)` then `af_exit`
-- [ ] Linker script for user programs (`user.lds`) placing text at `0x400000`
+- [x] Syscall wrappers: `af_write`, `af_exit`, `af_yield`, `af_clock_ns`
+- [x] `af_strlen`, `af_puts`, `af_putc`, `af_putu`, `af_puti`
+- [ ] `memset/memcpy/memmove/memcmp/strcmp/strncpy` — *not yet; nothing has needed
+      them. They arrive as a block when the first server does.*
+- [ ] A full `printf` — *deferred: `af_putu`/`af_puti` cover what init needed.
+      Format strings are worth having, but only once there is a buffer to build
+      them in and something to print from a driver.*
+- [x] `_start` stub (`libs/libaf/crt0.S`) that calls `main` and then `af_exit`
+- [x] Linker script for user programs (`libs/libaf/user.lds`)
+
+> **The link address is 4 GiB, not `0x400000` as originally sketched.**
+> `0x400000` sits inside the kernel's 3 GiB identity map, which is built from
+> 2 MiB huge pages marked kernel-only. A user program there would require those
+> huge pages to be split, and would occupy address space the kernel has already
+> described to itself as its own. 4 GiB is above the identity map, inside the
+> user half, and — because the segments are aligned to page boundaries — maps
+> cleanly with no interaction with the kernel's own mappings at all. The cost is
+> that user code must be compiled with `-mcmodel=large`, since the small model
+> cannot express a 32-bit absolute reference to `0x100000000`.
 
 #### 0.4.6 v0.4 tests & acceptance
-- [ ] Build a user program `hello.elf` that writes to the debug console and exits with code 0
-- [ ] Assert: the string appears, `main` returns, `sys_exit` terminates the process, the scheduler reaps it
-- [ ] CPL assertion test: read `cs` inside the user program, assert the low 2 bits are `3`
-- [ ] Pointer-validation test: pass `0xDEADBEEF` to `sys_debug_write`, assert a clean error rather than a kernel fault
+- [x] Build a user program that writes to the debug console and exits with code 0
+      (`apps/init`, packed into the FAT32 volume as `/INIT.ELF`)
+- [x] Assert: the string appears, `main` returns, `sys_exit` terminates the thread,
+      the scheduler reaps it
+- [x] The program verifies the kernel's own work from the outside: that `.bss` came
+      back zero, that `.data` was copied, that a written pattern read back
+      correctly, that `.rodata` is addressable through a computed index, and that
+      the clock and yield system calls behave across a context switch
+- [x] Page-permission assertions from the kernel side: code is user+exec and NOT
+      writable, stack is user+writable and NOT executable, and the kernel image at
+      `0x100000` is NOT user-accessible
+- [ ] CPL assertion test: read `cs` inside the user program, assert the low 2 bits
+      are 3 — *the panic dump prints `cs=0x1b` and the whole boot fails if it is
+      not, which is weaker than an in-program assertion. Cheap to add.*
+- [ ] Pointer-validation test: pass `0xDEADBEEF` to `sys_debug_write`, assert a
+      clean error rather than a kernel fault — *fails today; see 0.4.2*
 
-**✅ Acceptance criteria:** A user-mode ELF program prints `Hello from user mode (CPL=3)` and exits with status 0; the kernel remains healthy and continues scheduling.
+**✅ Acceptance criteria:** a user-mode ELF program is loaded off the file system,
+entered at CPL 3, runs its own checks, and exits with status 0; the kernel remains
+healthy.
+**Status: met.** `AF_EXEC_PREPARED` and `AF_EXEC_RAN` both appear in the boot log,
+and `tools/run_qemu.py` fails if either is missing.
+
+**Milestone status: not closed.** The acceptance criterion is met; 0.4.3 is not
+started and its absence is a real limitation, not a cosmetic one. The marker stays
+green and the boxes stay unticked.
+
 
 ---
 

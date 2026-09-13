@@ -252,6 +252,7 @@ class TestEndToEndImage(unittest.TestCase):
 
     def test_build_and_verify(self):
         payload = make_payload(300 * 1024)
+        init_payload = make_payload(8 * 1024)
 
         with tempfile.TemporaryDirectory() as tmp:
             boot_dir = os.path.join(tmp, "boot")
@@ -259,6 +260,13 @@ class TestEndToEndImage(unittest.TestCase):
             boot_path = os.path.join(boot_dir, "BOOTX64.EFI")
             with open(boot_path, "wb") as handle:
                 handle.write(payload)
+
+            # mkimage requires the user program's ELF: the kernel loads it off
+            # the FAT32 volume at boot. A build directory without it is not a
+            # packable build.
+            init_path = os.path.join(tmp, "init.elf")
+            with open(init_path, "wb") as handle:
+                handle.write(init_payload)
 
             image_path = os.path.join(tmp, "test.img")
 
@@ -276,13 +284,36 @@ class TestEndToEndImage(unittest.TestCase):
             verify = subprocess.run(
                 [sys.executable, os.path.join(TOOLS_DIR, "verify_image.py"),
                  "--image", image_path,
-                 "--expect", f"EFI/BOOT/BOOTX64.EFI:{boot_path}"],
+                 "--expect", f"EFI/BOOT/BOOTX64.EFI:{boot_path}",
+                 "--expect", f"INIT.ELF:{init_path}"],
                 capture_output=True, text=True,
             )
             self.assertEqual(verify.returncode, 0,
                              f"verify_image failed:\n{verify.stdout}\n{verify.stderr}")
             self.assertIn("all ", verify.stdout)
             self.assertIn("checks passed", verify.stdout)
+
+    def test_missing_init_elf_is_refused(self):
+        # The failure this guards against is expensive and misleading: without
+        # the check, mkimage produces a perfectly valid image, and the mistake
+        # surfaces several minutes later as a kernel panic in QEMU that says
+        # nothing about the packaging step that caused it.
+        payload = make_payload(64 * 1024)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            boot_dir = os.path.join(tmp, "boot")
+            os.makedirs(boot_dir)
+            with open(os.path.join(boot_dir, "BOOTX64.EFI"), "wb") as handle:
+                handle.write(payload)
+
+            result = subprocess.run(
+                [sys.executable, os.path.join(TOOLS_DIR, "mkimage.py"),
+                 "--arch", "x86_64", "--build-dir", tmp,
+                 "--output", os.path.join(tmp, "test.img")],
+                capture_output=True, text=True,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("init.elf not found", result.stderr + result.stdout)
 
     def test_accidental_corruption_is_detected(self):
         # The verifier must actually fail when something is wrong, otherwise the
@@ -296,6 +327,8 @@ class TestEndToEndImage(unittest.TestCase):
             boot_path = os.path.join(boot_dir, "BOOTX64.EFI")
             with open(boot_path, "wb") as handle:
                 handle.write(payload)
+            with open(os.path.join(tmp, "init.elf"), "wb") as handle:
+                handle.write(make_payload(8 * 1024))
 
             image_path = os.path.join(tmp, "test.img")
             subprocess.run(

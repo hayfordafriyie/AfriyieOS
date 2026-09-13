@@ -1,9 +1,25 @@
 # System Call ABI
 
-**Status:** 🔨 the v0.4 surface is specified and frozen; calls are implemented from v0.4
+**Status:** 🔨 v0.4 — the calling convention and numbers 0–3 and 5 are implemented
+and exercised from ring 3. Everything else in §2 is a reserved number that returns
+`AF_ERR_NOTSUP` today.
 
 This is the contract between user space and the kernel. It is versioned and never
 changes incompatibly without a version bump.
+
+> **As built at v0.4, honestly.** Two things differ from the design below and are
+> recorded here rather than quietly corrected:
+>
+> 1. **The entry instruction is `int 0x80`, not `syscall`.** The register
+>    convention is the same, so §1 holds either way and only the stub in §5
+>    changes when the instruction does. `syscall`/`sysretq` needs
+>    `IA32_STAR`/`LSTAR`/`FMASK` set up and a second entry path, which was not
+>    worth adding in the milestone that first crossed the privilege boundary.
+> 2. **Argument validation does not yet consult the page tables.** §3 describes
+>    `user_ptr_ok` calling `vmm_range_has_access`. At v0.4 it checks range and
+>    wraparound and stops there, so a pointer that is in range but *unmapped*
+>    faults in kernel mode instead of returning `AF_ERR_FAULT`. This is a real
+>    gap, not a simplification — it is the first thing to fix in v0.5.
 
 ---
 
@@ -50,38 +66,44 @@ is worth knowing why: this is the single most time-consuming bug class at v0.4.
 
 ## 2. The table
 
-| # | Name | Arguments | Returns | From |
-| --- | --- | --- | --- | --- |
-| 0 | `sys_debug_write` | `buf, len` | bytes written | v0.4 |
-| 1 | `sys_exit` | `code` | *never returns* | v0.4 |
-| 2 | `sys_thread_create` | `entry, arg, stack, prio` | `cap THREAD` | v0.4 |
-| 3 | `sys_thread_yield` | — | 0 | v0.4 |
-| 4 | `sys_thread_join` | `cap THREAD` | exit code | v0.4 |
-| 5 | `sys_clock_get` | `clock_id` | nanoseconds | v0.6 |
-| 6 | `sys_sleep` | `ns` | 0 | v0.6 |
-| 7 | `sys_fb_map` | — | `cap FRAME` + geometry | v0.6 |
-| 8 | `sys_input_read` | `evt_ptr, max` | events read | v0.5 |
-| 9 | `sys_dev_claim` | `dev_id` | `cap DEVICE` | v0.5 |
-| 10 | `sys_ipc_send` | `cap, msg_ptr` | 0 | v0.7 |
-| 11 | `sys_ipc_recv` | `cap, msg_ptr` | 0 | v0.7 |
-| 12 | `sys_ipc_call` | `cap, msg_ptr, reply_ptr` | 0 | v0.7 |
-| 13 | `sys_ipc_reply` | `cap, msg_ptr` | 0 | v0.7 |
-| 14 | `sys_notify` | `cap, bits` | 0 | v0.8 |
-| 15 | `sys_wait` | `cap, mask, out_ptr` | observed bits | v0.8 |
-| 16 | `sys_cap_derive` | `cap, rights` | `cap` | v0.7 |
-| 17 | `sys_cap_delete` | `cap` | 0 | v0.7 |
-| 18 | `sys_cap_revoke` | `cap` | 0 | v0.7 |
-| 19 | `sys_mem_alloc` | `size, flags` | `cap FRAME` | v0.7 |
-| 20 | `sys_mem_map` | `cap, vaddr, rights` | mapped address | v0.7 |
-| 21 | `sys_mem_unmap` | `vaddr, size` | 0 | v0.7 |
-| 22 | `sys_mem_grant` | `dst_proc, cap, vaddr, rights` | target address | v0.7 |
-| 23 | `sys_irq_wait` | `cap IRQ` | irq number | v0.7 |
-| 24 | `sys_irq_ack` | `cap IRQ` | 0 | v0.7 |
-| 25 | `sys_process_spawn` | `path_cap, argv_ptr` | `cap PROCESS` | v0.9 |
-| 26 | `sys_process_wait` | `cap PROCESS` | exit code | v0.9 |
+| # | Name | Arguments | Returns | From | Implemented |
+| --- | --- | --- | --- | --- | --- |
+| 0 | `sys_debug_write` | `buf, len` | bytes written | v0.4 | **v0.4 ✓** |
+| 1 | `sys_exit` | `code` | *never returns* | v0.4 | **v0.4 ✓** |
+| 2 | `sys_thread_create` | `entry, arg, stack, prio` | `cap THREAD` | v0.4 | v0.5 |
+| 3 | `sys_thread_yield` | — | 0 | v0.4 | **v0.4 ✓** |
+| 4 | `sys_thread_join` | `cap THREAD` | exit code | v0.4 | v0.5 |
+| 5 | `sys_clock_get` | `clock_id` | nanoseconds | v0.6 | **v0.4 ✓** *pulled forward* |
+| 6 | `sys_sleep` | `ns` | 0 | v0.6 | — |
+| 7 | `sys_fb_map` | — | `cap FRAME` + geometry | v0.6 | — |
+| 8 | `sys_input_read` | `evt_ptr, max` | events read | v0.5 | — |
+| 9 | `sys_dev_claim` | `dev_id` | `cap DEVICE` | v0.5 | — |
+| 10 | `sys_ipc_send` | `cap, msg_ptr` | 0 | v0.7 | — |
+| 11 | `sys_ipc_recv` | `cap, msg_ptr` | 0 | v0.7 | — |
+| 12 | `sys_ipc_call` | `cap, msg_ptr, reply_ptr` | 0 | v0.7 | — |
+| 13 | `sys_ipc_reply` | `cap, msg_ptr` | 0 | v0.7 | — |
+| 14 | `sys_notify` | `cap, bits` | 0 | v0.8 | — |
+| 15 | `sys_wait` | `cap, mask, out_ptr` | observed bits | v0.8 | — |
+| 16 | `sys_cap_derive` | `cap, rights` | `cap` | v0.7 | — |
+| 17 | `sys_cap_delete` | `cap` | 0 | v0.7 | — |
+| 18 | `sys_cap_revoke` | `cap` | 0 | v0.7 | — |
+| 19 | `sys_mem_alloc` | `size, flags` | `cap FRAME` | v0.7 | — |
+| 20 | `sys_mem_map` | `cap, vaddr, rights` | mapped address | v0.7 | — |
+| 21 | `sys_mem_unmap` | `vaddr, size` | 0 | v0.7 | — |
+| 22 | `sys_mem_grant` | `dst_proc, cap, vaddr, rights` | target address | v0.7 | — |
+| 23 | `sys_irq_wait` | `cap IRQ` | irq number | v0.7 | — |
+| 24 | `sys_irq_ack` | `cap IRQ` | 0 | v0.7 | — |
+| 25 | `sys_process_spawn` | `path_cap, argv_ptr` | `cap PROCESS` | v0.9 | — |
+| 26 | `sys_process_wait` | `cap PROCESS` | exit code | v0.9 | — |
 
 Numbers are **append-only**. A removed call leaves its number reserved forever,
 so a stale binary gets `AF_ERR_NOTSUP` rather than reaching a different call.
+
+`sys_clock_get` was scheduled for v0.6 and was implemented at v0.4 instead. The
+reason is not convenience: the user program's own acceptance test needed to make a
+measurement across a context switch, and at v0.4 the only other observable effect
+a program had was printing a line. A clock is what lets a program assert something
+about *time* rather than only about output.
 
 ---
 
@@ -143,48 +165,40 @@ pointers inside and outside the valid range, and random lengths including `0`,
 
 ## 5. User-space stubs
 
-`libs/libaf` wraps every call so application code never writes inline assembly:
+`libs/libaf` wraps every call so application code never writes inline assembly.
+The stub as built at v0.4 (`libs/libaf/include/af.h`) is the three-argument form
+the implemented calls need:
 
 ```c
-/* libs/libaf/include/af/syscall.h */
-static inline long af_syscall6(long n, long a1, long a2, long a3,
-                               long a4, long a5, long a6)
+/* libs/libaf/include/af.h */
+static inline af_i64 af_syscall3(af_u64 number, af_u64 a1, af_u64 a2, af_u64 a3)
 {
-#if AF_TARGET_X86_64
-    long ret;
-    register long r10 __asm__("r10") = a4;
-    register long r8  __asm__("r8")  = a5;
-    register long r9  __asm__("r9")  = a6;
-    __asm__ __volatile__("syscall"
-                         : "=a"(ret)
-                         : "a"(n), "D"(a1), "S"(a2), "d"(a3),
-                           "r"(r10), "r"(r8), "r"(r9)
-                         : "rcx", "r11", "memory");
-    return ret;
-#else
-    register long x8 __asm__("x8") = n;
-    register long x0 __asm__("x0") = a1;
-    register long x1 __asm__("x1") = a2;
-    register long x2 __asm__("x2") = a3;
-    register long x3 __asm__("x3") = a4;
-    register long x4 __asm__("x4") = a5;
-    register long x5 __asm__("x5") = a6;
-    __asm__ __volatile__("svc #0"
-                         : "+r"(x0)
-                         : "r"(x8), "r"(x1), "r"(x2), "r"(x3), "r"(x4), "r"(x5)
-                         : "memory");
-    return x0;
-#endif
+    af_i64 result;
+    __asm__ __volatile__("int $0x80"
+                         : "=a"(result)
+                         : "a"(number), "D"(a1), "S"(a2), "d"(a3)
+                         : "memory", "rcx", "r11");
+    return result;
 }
 ```
 
-Apps then use plain functions:
+When `SYSCALL` replaces `int 0x80` this becomes `syscall` with the same operands,
+and the six-argument form arrives with the first call that needs more than three —
+adding it before then would be writing a stub for a calling convention nothing
+uses.
+
+Apps then use plain functions, exactly as designed:
 
 ```c
 long af_debug_write(const char *buf, af_size len);
 void af_exit(int code) __attribute__((noreturn));
 af_cap_t af_thread_create(void (*entry)(void *), void *arg, af_size stack, int prio);
 ```
+
+`af_exit` is defined out of line in `libs/libaf/af.c`, not inline in the header:
+`crt0.S` calls it by name from assembly, and a `static inline` function is emitted
+only if some C translation unit happens to call it — a reference from assembly
+counts for nothing, and the link fails.
 
 ---
 

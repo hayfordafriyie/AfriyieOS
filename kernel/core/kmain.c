@@ -40,10 +40,12 @@
 #include "afriyie/virtio_blk.h"
 #include "afriyie/fs.h"
 #include "afriyie/syscall.h"
+#include "afriyie/elf.h"
 
 // Defined at the bottom of this file. Declared here because kmain creates the
 // idle thread before the definition appears.
 static void idle_thread_entry(void *arg);
+static void usermode_stub_thread(void *arg);
 
 // -----------------------------------------------------------------------------
 // Recovery path
@@ -338,20 +340,102 @@ void kmain(af_boot_info_t *boot_info)
     // -------------------------------------------------------------------------
     // 12. User mode
     //
-    // The last thing the boot thread does. af_x86_enter_user_mode never returns
-    // to this point: the ring-3 program's final system call terminates the
-    // thread, so the idle thread takes over and the system goes quiet.
+    // Two different things are tested here, and they fail independently, so both
+    // are done rather than the newer one replacing the older.
+    //
+    //   usermode_selftest()  the ring transition itself: GDT user descriptors,
+    //                        TSS RSP0, an interrupt-return to CPL 3, and the
+    //                        system call gate back in. It runs a stub the kernel
+    //                        copied into a page the kernel mapped.
+    //
+    //   elf_exec()           everything downstream of that: reading a file off
+    //                        FAT32, parsing an ELF64 header, mapping each
+    //                        program segment with its own permissions, zeroing
+    //                        .bss, and entering ring 3 at e_entry.
+    //
+    // The stub runs on its own thread because af_x86_enter_user_mode never
+    // returns — the ring-3 program's exit terminates whichever thread entered
+    // it. Calling both in sequence from the boot thread would mean the second
+    // one never ran.
     // -------------------------------------------------------------------------
-    if (block_boot_device() != NULL) {
-        usermode_selftest();
+
+    // Mount the volume init lives on.
+    //
+    // This deliberately duplicates the mount the FAT32 self test performs rather
+    // than sharing its volume. A self test that reuses the object under test
+    // proves less than one that builds it from scratch, and this mount exists
+    // for a different reason: init needs somewhere to be read from.
+    af_block_device_t *boot_dev = block_boot_device();
+    if (boot_dev == NULL) {
+        boot_failed(AF_ERR_NOENT, "no block device to load init from");
     }
+
+    static fat32_volume_t init_volume;
+    af_partition_table_t table;
+    af_partition_t esp;
+
+    rc = partition_table_read(boot_dev, &table);
+    if (af_status_err(rc)) {
+        boot_failed(rc, "reading the partition table to find init");
+    }
+
+    rc = partition_find_esp(&table, &esp);
+    if (af_status_err(rc)) {
+        boot_failed(rc, "no EFI System Partition to load init from");
+    }
+
+    rc = fat32_mount(&init_volume, boot_dev, &esp);
+    if (af_status_err(rc)) {
+        boot_failed(rc, "mounting the boot volume to load init");
+    }
+
+    af_thread_t *stub_thread = thread_create("usermode-stub", usermode_stub_thread,
+                                             NULL, AF_KERNEL_STACK_SIZE,
+                                             AF_PRIO_DEFAULT);
+    if (stub_thread == NULL) {
+        boot_failed(AF_ERR_NOMEM, "creating the ring-3 stub thread");
+    }
+    sched_admit(stub_thread);
+
+    // Wait for the stub thread to actually exit, rather than sleeping a fixed
+    // interval and hoping.
+    //
+    // A timed wait here is a race with a nasty shape. The first version slept
+    // 20 ticks, and the stub — which enters ring 3, prints, and exits — happened
+    // to still be mid-run when the boot thread woke: elf_exec then loaded init
+    // into an address space the stub was still using, and the stub's exit
+    // system call never arrived. The visible symptom was a missing AF_USER_OK.
+    //
+    // sched_collect_zombies is called here, not just yielded to, because reaping
+    // is what removes the thread from the table. The idle thread normally does
+    // it, but the idle thread only runs when nothing else can — and a thread
+    // spinning in this loop is always runnable, so it would wait forever.
+    af_tid_t stub_tid = stub_thread->tid;
+    af_u64 spins = 0;
+    while (thread_by_tid(stub_tid) != NULL) {
+        sched_collect_zombies();
+        sched_yield();
+
+        // Bounded: a stub that never exits must fail loudly rather than hang the
+        // boot with no output at all.
+        if (++spins > 2000000) {
+            af_panic("the ring-3 stub thread (tid %u) never exited", stub_tid);
+        }
+    }
+
+    af_info("boot", "ring-3 stub thread finished; loading init");
+
+    // Loads INIT.ELF off the volume, maps it, enters it at CPL 3. Never returns
+    // to this point: init's exit system call terminates the boot thread.
+    elf_exec(&init_volume, "/INIT.ELF");
 
     // -------------------------------------------------------------------------
     // Idle
     //
-    // The boot thread's job is done. It stays runnable at default priority so
-    // the machine has something to do, and yields rather than halting: the
-    // dedicated idle thread is the one that halts the CPU.
+    // Only reachable if elf_exec is ever changed to return. The boot thread's
+    // job is done; it stays runnable at default priority so the machine has
+    // something to do, and yields rather than halting: the dedicated idle thread
+    // is the one that halts the CPU.
     // -------------------------------------------------------------------------
     for (;;) {
         sched_collect_zombies();
@@ -377,4 +461,24 @@ static void idle_thread_entry(void *arg)
         sched_collect_zombies();
         af_halt();
     }
+}
+
+// -----------------------------------------------------------------------------
+// The ring-3 stub thread
+//
+// usermode_selftest() ends in af_x86_enter_user_mode, which never returns: the
+// stub's exit system call marks whichever thread entered ring 3 as a zombie. So
+// it gets its own thread, and the boot thread keeps the machine to itself once
+// the stub is gone.
+// -----------------------------------------------------------------------------
+static void usermode_stub_thread(void *arg)
+{
+    AF_UNUSED(arg);
+
+    usermode_selftest();
+
+    // Unreachable. Present so that a future change to usermode_selftest that
+    // makes it return does not silently fall through into the idle loop with
+    // the thread table in an unexplained state.
+    af_panic("usermode_selftest returned");
 }
