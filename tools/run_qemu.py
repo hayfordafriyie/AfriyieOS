@@ -86,6 +86,12 @@ EXPECTED_MARKERS = [
     # today. A regression here is a regression in the foundation every personality
     # will stand on.
     "AF_BINFMT_OK",
+    # v0.6. The process object: creation, memory isolation between two address
+    # spaces, thread membership, and teardown. It is here because it is the thing
+    # a capability table will hang from and every IPC endpoint will be addressed
+    # by — and because the ownership model it encodes (a process owns memory, not
+    # a thread) was wrong twice before, in ways a boot test could not see.
+    "AF_PROC_OK",
 ]
 
 FATAL_MARKERS = [

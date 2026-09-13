@@ -128,6 +128,46 @@ hal_pt_root_t hal_pt_create(void);
 hal_pt_root_t hal_pt_create_user(void);
 
 // Frees a page-table root and every table it owns.
+//
+// IT ALSO RELEASES EVERY FRAME MAPPED INTO THE SPACE, and this is the part that
+// has to be written down because two pieces of code each assumed they owned the
+// same frame. A user-space frame allocated with pmm_alloc_frame_z and mapped
+// with hal_map_page belongs to the ADDRESS SPACE from the moment it is mapped.
+// The allocator must not free it afterwards:
+//
+//     frame = pmm_alloc_frame_z();
+//     hal_map_page(root, va, frame, ...);   /* ownership moves here */
+//     ...
+//     hal_pt_destroy(root);                 /* frees frame — do not also free it */
+//
+// Getting this wrong produces
+//
+//     ERROR pmm: double free of frame 0x...
+//
+// which at least fails loudly. The dangerous direction is the other one: freeing
+// a frame that is still mapped leaves a live translation pointing at memory the
+// allocator has handed to somebody else, and that does not fail until something
+// unrelated corrupts.
+//
+// ---------------------------------------------------------------------------
+// KNOWN LIMITATION, and it is on the critical path.
+//
+// Because destroy FREES rather than UNREFS, two address spaces cannot share a
+// frame. Process A maps F, process B maps F, A dies, and F is freed while B is
+// still using it; B dies and the double-free assert fires.
+//
+// That makes shared memory impossible today, and IPC will need it — a shared
+// buffer is how a message avoids being copied through the kernel on every send.
+// The fix is small and already available: pmm_frame_ref and pmm_frame_unref
+// exist (kernel/include/afriyie/pmm.h), so destroy should unref a leaf instead
+// of freeing it, and a sharer should ref before mapping.
+//
+// It is NOT done here because it changes frame ownership for every existing
+// caller at the same time as the process object is being introduced, and two
+// ownership changes in one step is how a memory bug becomes unattributable. It
+// belongs with the IPC work, which needs tests specifically for the sharing case
+// rather than a change that merely stops the assert firing.
+// ---------------------------------------------------------------------------
 void hal_pt_destroy(hal_pt_root_t root);
 
 af_status_t hal_map_page(hal_pt_root_t root, af_vaddr va, af_paddr pa, af_u32 flags);

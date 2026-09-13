@@ -25,6 +25,7 @@
 // =============================================================================
 
 #include "afriyie/sched.h"
+#include "afriyie/process.h"
 #include "afriyie/thread.h"
 #include "afriyie/hal.h"
 #include "afriyie/log.h"
@@ -263,24 +264,30 @@ static void switch_to(af_thread_t *next)
     // able to take a tick.
     af_restore_flags(flags);
 
-    // Install the incoming thread's address space, if it has one.
+    // Install the incoming thread's address space.
     //
-    // This is where a process's page tables take effect: a user thread carries
-    // its own root and nothing else runs on it. Doing it here rather than in
-    // elf_exec means it is also undone correctly — when the user thread exits,
-    // the next switch installs whatever the next thread uses, which for every
-    // kernel thread is the kernel's own root. Restoring it by hand at the exit
-    // path would have to be repeated at every other path that leaves the thread,
-    // and the one that was missed would run the kernel on a dead process's
-    // tables.
+    // The root belongs to the PROCESS, not the thread: two threads of one
+    // program must share memory, and a thread that owned a root could not. A
+    // kernel thread has no process, and therefore runs on the kernel's tables —
+    // which is the absence of a case rather than a second one.
     //
-    // Safe to do before context_switch: the kernel's own memory is mapped in
-    // every address space (that is what hal_pt_create_user is for), so the
-    // instructions immediately after this, and prev's stack, remain reachable.
-    if (s_kernel_root != 0 && next->addr_space != s_last_installed) {
-        hal_set_page_table(next->addr_space != 0 ? next->addr_space
-                                                 : s_kernel_root);
-        s_last_installed = next->addr_space;
+    // Doing this here rather than at the exit path means it is also undone
+    // correctly: when a user thread exits, the next switch installs whatever the
+    // next thread needs. Restoring it by hand on the way out would have to be
+    // repeated at every path that leaves a thread, and the one that was missed
+    // would run the kernel on a dead process's tables.
+    //
+    // Safe before context_switch: the kernel's own memory is mapped in every
+    // address space (that is what hal_pt_create_user is for), so the instructions
+    // immediately after this, and prev's stack, stay reachable.
+    const hal_pt_root_t want =
+        (next->process != NULL && next->process->addr_space != 0)
+            ? next->process->addr_space
+            : s_kernel_root;
+
+    if (want != 0 && want != s_last_installed) {
+        hal_set_page_table(want);
+        s_last_installed = want;
     }
 
     // The switch itself. When this thread is next scheduled, execution resumes
@@ -501,30 +508,38 @@ void sched_collect_zombies(void)
     while (s_zombie_count > 0) {
         af_thread_t *zombie = s_zombies[--s_zombie_count];
 
-        // A user thread's address space dies with it.
+        // Detach from the process BEFORE reaping the thread, and reap the
+        // PROCESS afterwards if this was its last thread.
         //
-        // This cannot happen where the thread is QUEUED for reaping — the call
-        // in switch_to — because at that moment CR3 may still be that very
-        // space, and freeing the page tables would pull them out from under the
-        // executing kernel: the next instruction fetch would find nothing.
+        // The order matters. process_reap frees the address space, and freeing
+        // page tables that CR3 currently holds does not fail — it triple-faults
+        // with no output. Doing it while the thread is still attached would mean
+        // doing it while the thread's kernel stack is still in use.
         //
-        // This runs from the idle thread, which is on the kernel's root by
-        // construction, but the check below is explicit rather than resting on
-        // that. A future caller that collects zombies from somewhere else would
-        // otherwise free the tables it is standing on, and the symptom — an
-        // instant triple fault with no output — would point at the wrong thing.
-        if (zombie->addr_space != 0) {
-            if (s_last_installed == (hal_pt_root_t)zombie->addr_space) {
+        // The switch back to the kernel's root is explicit rather than resting
+        // on the idle thread being on it by construction. A future caller that
+        // collects zombies from somewhere else would otherwise free the tables
+        // it is standing on, and the symptom would point at the wrong place.
+        af_process_t *proc = zombie->process;
+
+        if (proc != NULL) {
+            const hal_pt_root_t space = proc->addr_space;
+
+            if (space != 0 && s_last_installed == space) {
                 hal_set_page_table(s_kernel_root);
                 s_last_installed = s_kernel_root;
             }
-            // Logged, not silent. "The address space is freed with its thread" is
-            // a claim, and without a line like this the only evidence for it is
-            // that nothing crashed — which is also what a leak looks like.
-            af_info("sched", "reaping tid %u: releasing address space 0x%lX",
-                    zombie->tid, zombie->addr_space);
-            hal_pt_destroy((hal_pt_root_t)zombie->addr_space);
-            zombie->addr_space = 0;
+
+            process_detach_thread(zombie);
+
+            // Last thread out turns off the lights. A process whose threads have
+            // all gone and whose parent has not waited is STILL a zombie — it
+            // exists so that process_wait has something to return a code from.
+            // Only a process nobody is going to wait on is reaped here.
+            if (proc->thread_count == 0 && proc->state == AF_PROCESS_ZOMBIE &&
+                proc->waiter == NULL) {
+                process_reap(proc);
+            }
         }
 
         thread_reap(zombie);
@@ -534,25 +549,22 @@ void sched_collect_zombies(void)
 // -----------------------------------------------------------------------------
 // Installing an address space by hand
 //
-// For a thread that is setting up its own address space before it runs on it —
-// elf_exec, loading a program into a space it has just created. Everything else
-// goes through switch_to, which does the same thing.
+// For a thread — or a process — setting up an address space it is about to run
+// on. Everything else goes through switch_to, which does the same thing.
 //
 // It has to be a scheduler entry point rather than a call to hal_set_page_table,
 // because s_last_installed is the scheduler's record of what CR3 holds. Changing
 // CR3 behind its back would make it skip an install it needed, and the thread
 // would run on the wrong tables while every log line said the right one.
 // -----------------------------------------------------------------------------
-void sched_set_addr_space(af_u64 root)
+void sched_set_process(af_process_t *proc)
 {
     if (s_current != NULL) {
-        s_current->addr_space = root;
+        s_current->process = proc;
     }
 
-    // The extra parentheses are not decoration. C parses the middle operand of
-    // ?: as an expression, and a cast at the start of it is read as a type name,
-    // so `a ? (T)x : y` is a syntax error in C even though it is legal C++.
-    const hal_pt_root_t want = (root != 0) ? ((hal_pt_root_t)root) : s_kernel_root;
+    const hal_pt_root_t want =
+        (proc != NULL && proc->addr_space != 0) ? proc->addr_space : s_kernel_root;
 
     if (want != 0 && want != s_last_installed) {
         hal_set_page_table(want);

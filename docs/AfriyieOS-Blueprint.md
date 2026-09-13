@@ -1255,32 +1255,38 @@ partially-converted kernel faults on its first instruction fetch.
 - [x] Return-value convention: `>= 0` success, negative `af_status_t` error
 - [x] Numbering is append-only, with retired numbers reserved
 
-#### 0.4.3 Processes — **partially done at v0.5: address spaces exist, the process object does not**
-- [ ] `struct af_process { pid; addr_space; threads; cap_table; fds; parent; exit_code; }`
-- [x] A user address space that can be installed — `hal_pt_create_user`, with the
-      kernel's half shared by pointer and user space confined to its own top-level
-      slot. Proved by a test that creates one, checks the kernel is reachable and
-      the user region is not, then **switches to it and switches back**.
-- [x] The address space is a property of the running thread: the scheduler installs
-      it on every context switch, and destroys it when the thread is reaped.
-- [ ] `process_create()` — the object that owns an address space and a set of
-      threads. Today the address space is owned by a **thread**, which means two
-      threads of one program would not share memory. That is the next thing.
+#### 0.4.3 Processes — **the object exists as of v0.6; fork and spawn do not**
+- [x] `struct af_process { pid; addr_space; threads; parent; exit_code; ... }`
+      — `kernel/include/afriyie/process.h`. **An address space belongs to a
+      process, not to a thread**, which is the correction that took two attempts:
+      v0.4 had one address space for everything, v0.5 moved it onto the thread
+      (fixing the collision, and making a second thread impossible), and v0.6
+      moved it onto the process, which is where a capability table can hang.
+- [x] `process_create()` — creates the process and its address space together
+- [x] Thread membership: a process owns a list of threads; the scheduler installs
+      the process's address space on every switch
+- [x] `process_exit()` / `process_wait()` — exit codes, a blocking wait, and
+      reaping; verified by 29 boot-time checks (`AF_PROC_OK`)
 - [ ] `process_fork()` via copy-on-write page tables
 - [ ] `sys_thread_create` spawning a user thread in the current process
 - [ ] `sys_process_spawn(path_cap, argv)`
-- [ ] `wait`/`exit` semantics, an "init" process that never dies
+- [ ] An "init" process that never dies
+- [ ] Capability table per process — deliberately **not** stubbed. A field that
+      nothing enforces is worse than an absence, because it looks like isolation
 
-> **What v0.5 actually changed, and what it did not.** The limitation that blocked
-> this milestone is gone: there are now genuinely separate address spaces, and a
-> program is loaded into its own rather than into the kernel's. What remains is the
-> *object* that groups threads under one address space, and everything that follows
-> from it — `fork`, `spawn`, `wait`, and the `af_process_t *` that
-> `docs/abi/syscalls.md` §3 passes to its validator.
+> **What v0.6 changed.** The address space moved from the thread to the process,
+> and the process gained creation, thread membership, exit, a blocking wait and
+> teardown. That unblocks everything downstream: a capability is authority held
+> by a *program*, and there was nowhere to put one; an IPC endpoint is addressed
+> to a *process*, and there was nothing to address.
 >
-> The reason this is not stubbed: an address space owned by a thread is enough to
-> run one program, and it is exactly the wrong shape for two. Adding `fork` on top
-> of it would mean writing it twice.
+> **One limitation this exposed and did not fix.** `hal_pt_destroy` frees the
+> frames mapped into the space rather than unreferencing them, so two address
+> spaces cannot share a frame. Shared memory is how IPC avoids copying every
+> message through the kernel, so this is on the critical path — the fix is
+> `pmm_frame_unref`, which already exists, and it is deliberately left for the
+> IPC work rather than bundled with an ownership change of its own. See the note
+> beside `hal_pt_destroy` in `kernel/include/afriyie/hal.h`.
 
 #### 0.4.4 ELF64 loader
 - [x] Validate the header: magic, class=64, little-endian, machine=x86_64,

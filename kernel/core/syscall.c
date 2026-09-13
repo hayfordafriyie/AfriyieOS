@@ -28,6 +28,7 @@
 #include "afriyie/kstring.h"
 #include "afriyie/thread.h"
 #include "afriyie/sched.h"
+#include "afriyie/process.h"
 #include "afriyie/heap.h"
 #include "afriyie/pmm.h"
 #include "afriyie/config.h"
@@ -55,9 +56,6 @@
 // -----------------------------------------------------------------------------
 static af_u64 s_syscall_count = 0;
 static af_u64 s_syscall_by_number[AF_SYS_MAX];
-
-// The thread that ran the most recent ring-3 code, so sys_exit can terminate it.
-static af_thread_t *s_user_thread = NULL;
 
 // AF_USER_OK is a one-shot marker. See the comment at its emission site.
 static bool s_user_ok_emitted = false;
@@ -274,11 +272,26 @@ static af_i64 syscall_dispatch(af_u64 number, af_u64 a1, af_u64 a2, af_u64 a3,
 
         // The ring-3 context belongs to a thread; terminating it means the
         // scheduler never returns to the user frame, so the iretq that would
-        // have resumed ring 3 simply does not happen. thread_exit never returns.
-        if (s_user_thread != NULL) {
-            s_user_thread->state = AF_THREAD_ZOMBIE;
-        }
-        thread_exit();
+        // have resumed ring 3 simply does not happen.
+        //
+        // THIS GOES THROUGH process_exit, and it did not used to. The original
+        // version marked the thread a zombie by hand and called thread_exit
+        // directly, which terminates the THREAD and leaves the PROCESS alive —
+        // so init exited, its thread was reaped, and its process sat in the
+        // table forever holding an address space and a pid.
+        //
+        // The leak was invisible on every diagnostic that existed: the boot test
+        // passed, no marker was missing, and the only symptom was a process that
+        // was never released. It was found by reading the boot log for a
+        // "reaping pid" line that should have been there after init exited and
+        // was not.
+        //
+        // process_exit sets the process's exit code, marks it a zombie, wakes a
+        // parent blocked in process_wait, and then terminates this thread. A
+        // thread with no process — the ring-3 stub — falls through to the same
+        // thread_exit, because process_exit handles that case rather than
+        // requiring it to be checked here.
+        process_exit((af_i32)a1);
     }
 
     default:
@@ -307,8 +320,6 @@ void syscall_entry(void *frame_opaque)
     if (frame == NULL) {
         return;
     }
-
-    s_user_thread = thread_current();
 
     // Register convention, matching docs/abi/syscalls.md:
     //   rax = number, rdi/rsi/rdx/r10/r8/r9 = arguments, rax = result

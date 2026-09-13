@@ -44,6 +44,7 @@
 #include "afriyie/kstring.h"
 #include "afriyie/syscall.h"
 #include "afriyie/sched.h"
+#include "afriyie/process.h"
 #include "afriyie/thread.h"
 
 #if AF_TARGET_X86_64
@@ -447,36 +448,58 @@ af_status_t elf_load(fat32_volume_t *vol, const char *path,
 // -----------------------------------------------------------------------------
 // Load and run
 //
-// FROM v0.5 THIS CREATES A REAL ADDRESS SPACE.
+// FROM v0.6 THIS CREATES A PROCESS.
 //
-// Until now the program was loaded into the KERNEL's address space, which worked
+// The history is worth keeping, because each step was a different mistake.
+//
+// At v0.4 the program was loaded into the KERNEL's address space, which worked
 // only because there was exactly one user program. The ring-3 self test's stub
-// lives in the same space, and the two collided at the same virtual address —
+// lived in the same space and the two collided at the same virtual address —
 // the stub's code page and init's .text landing on each other, with the mapper
 // correctly refusing to remap ERR_EXIST. That collision was the visible symptom
 // of there being no address space per program, and moving the stub to a
 // different address only hid it.
 //
-// Now the program gets its own root. The stub keeps the kernel's.
+// At v0.5 the address space moved to the THREAD, which fixed the collision and
+// was still the wrong shape: two threads of one program would not have shared
+// memory, so a program could not have a second thread at all, and there was
+// nowhere to hang a capability table — and a capability is authority held by a
+// program, not by whichever thread happens to be running.
+//
+// Now it belongs to a PROCESS, which is what it always should have been.
 // -----------------------------------------------------------------------------
 void elf_exec(fat32_volume_t *vol, const char *path)
 {
     af_vaddr entry = 0;
     af_vaddr stack_top = 0;
 
-    hal_pt_root_t space = hal_pt_create_user();
-    if (space == 0) {
-        af_panic("elf: could not create an address space for '%s'", path);
+    af_thread_t *self = thread_current();
+    if (self == NULL) {
+        af_panic("elf: elf_exec called with no current thread");
     }
 
-    af_info("elf", "address space 0x%lX for '%s' (kernel root 0x%lX shared)",
-            (af_u64)space, path, (af_u64)hal_get_page_table());
+    // The program lives in its own process. The parent is the kernel, because
+    // this is init — the first program, owned by nobody. A user program spawning
+    // another would pass its own pid, and process_wait would then work for it.
+    af_process_t *proc = process_create(path, AF_PID_KERNEL);
+    if (proc == NULL) {
+        af_panic("elf: could not create a process for '%s'", path);
+    }
 
-    // Attach it to this thread and switch to it BEFORE loading, because elf_load
+    af_info("elf", "pid %u, address space 0x%lX (kernel root 0x%lX shared)",
+            proc->pid, (af_u64)proc->addr_space, (af_u64)hal_get_page_table());
+
+    // Attach the running thread to the process BEFORE switching, because from
+    // here on this thread's execution context belongs to it: the stack it is
+    // standing on is a kernel stack, but the address space it will return to is
+    // the process's.
+    process_attach_thread(proc, self);
+
+    // Switch to the process's address space BEFORE loading, because elf_load
     // maps into the current address space. Going through the scheduler rather
     // than calling hal_set_page_table keeps its record of what CR3 holds
-    // truthful — see sched_set_addr_space.
-    sched_set_addr_space((af_u64)space);
+    // truthful — see sched_set_process.
+    sched_set_process(proc);
 
     af_status_t rc = elf_load(vol, path, &entry, &stack_top);
     if (af_status_err(rc)) {
@@ -484,16 +507,19 @@ void elf_exec(fat32_volume_t *vol, const char *path)
         // stack and reads the kernel's data, and doing that on a half-built
         // address space for a program that failed to load would be reading
         // through tables that are about to be abandoned.
-        sched_set_addr_space(0);
+        sched_set_process(NULL);
+        process_detach_thread(self);
+        process_reap(proc);
         af_panic("elf: could not load '%s' (%s)", path, af_status_name(rc));
     }
 
-    af_info("elf", "entering '%s' at 0x%lX in ring 3", path, entry);
+    af_info("elf", "entering '%s' at 0x%lX in ring 3 as pid %u",
+            path, entry, proc->pid);
     af_info("elf", "----------------------------------------------------------");
 
     af_marker("AF_EXEC_PREPARED");
 
     // Never returns: the program's exit system call terminates this thread, and
-    // the address space is torn down with it when the zombie is reaped.
+    // the process tears down when its last thread has been reaped.
     af_x86_enter_user_mode(entry, stack_top);
 }

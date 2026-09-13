@@ -13,6 +13,7 @@
 #include "afriyie/assert.h"     // af_panic, for the hard stop on a failed test
 #include "afriyie/selftest.h"
 #include "afriyie/binfmt.h"   // the declaration of the runner itself
+#include "afriyie/process.h"  // v0.6 process checks
 #include "afriyie/kstring.h"
 #include "afriyie/boot_info.h"
 #include "afriyie/fb.h"
@@ -671,6 +672,12 @@ void af_selftest_run_all(void)
     // and its own error lines, and a reader of the boot log should be able to see
     // format detection specifically rather than inferring it from a total.
     af_binfmt_selftest();
+
+    // v0.6 processes: creation, memory isolation between two address spaces,
+    // thread membership, and teardown. This is the object the capability table
+    // and every IPC endpoint will be attached to, so it is tested before
+    // anything is built on it rather than after.
+    af_process_selftest();
 
     if (s_failed == 0) {
         af_info("test", "%u checks passed", s_passed);

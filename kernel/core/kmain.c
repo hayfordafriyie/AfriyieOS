@@ -41,6 +41,7 @@
 #include "afriyie/fs.h"
 #include "afriyie/syscall.h"
 #include "afriyie/elf.h"
+#include "afriyie/process.h"
 
 // Defined at the bottom of this file. Declared here because kmain creates the
 // idle thread before the definition appears.
@@ -191,6 +192,13 @@ void kmain(af_boot_info_t *boot_info)
         boot_failed(rc, "kernel heap initialisation");
     }
     af_marker("AF_HEAP_READY");
+
+    // The process table is a fixed array, but process_create allocates an
+    // address space through the PMM and the heap is used for thread stacks, so
+    // this runs after both and before anything can create a process. It is not
+    // a subsystem with its own marker: an empty table is not evidence of
+    // anything, and the checks that matter are af_process_selftest's.
+    process_init();
 
     // -------------------------------------------------------------------------
     // 4a. Paging

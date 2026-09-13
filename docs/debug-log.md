@@ -21,6 +21,106 @@ Lesson:     the generalisable part
 
 ---
 
+## 2026 — Entries from the process work
+
+### Two pieces of code each assumed they owned the same frame
+
+**Milestone:** v0.6
+**Symptom:** the new process self test panicked on its own teardown:
+
+```
+INFO  proc : reaping pid 3 'test-b': releasing address space 0x1E69000
+ERROR pmm  : double free of frame 0x1E76000
+AFRIYIEOS KERNEL PANIC
+  reason : assertion failed: false — double free of frame 0x1E76000
+```
+**Cause:** `hal_pt_destroy` releases the frames mapped into the address space it
+destroys — that is what "the process owns its memory" means, and it is why
+`process_reap` can be one call. The test had allocated `frame_b` with
+`pmm_alloc_frame_z`, mapped it into process B, and then freed it again after
+reaping B, on the reasoning that the test had allocated it and therefore owned it.
+
+It had allocated it. It did not still own it. Ownership transferred at
+`hal_map_page`, and the test was the second of two owners.
+**Fix:** the test no longer frees the frame, and the contract is written down in
+`hal.h` next to `hal_pt_destroy` — where it should have been before anything
+relied on it.
+**Found by:** the PMM's double-free assert. Worth noting which direction failed:
+this one *did* fail loudly. The reverse mistake — freeing a frame that is still
+mapped — leaves a live translation pointing at memory the allocator has handed to
+somebody else, and does not fail until something unrelated corrupts weeks later.
+**Lesson:** an ownership transfer that is not written down is not a contract, it
+is a coincidence that happens to hold while one piece of code is the only caller.
+The moment a second caller exists, one of them is wrong and neither can tell.
+
+---
+
+### Shared memory is impossible today, and the reason is one line
+
+**Milestone:** v0.6 (found while writing the ownership note above, not by a crash)
+**Symptom:** none yet. It would be: process A maps frame F, process B maps frame
+F, A exits, F is freed while B is still using it, B exits, double-free assert.
+**Cause:** `hal_pt_destroy` **frees** every user leaf frame rather than
+**unreferencing** it. With one owner that is exactly right. With two it is wrong
+in the worst way, because the first destroy looks like normal operation and the
+failure lands on the innocent second process.
+**Fix:** not applied here — deliberately recorded instead. `pmm_frame_ref` and
+`pmm_frame_unref` already exist, so the change is to unref a leaf instead of
+freeing it and to ref before mapping a second time. It is *not* done in this
+milestone because it changes frame ownership for every existing caller at the
+same time as the process object is being introduced, and two ownership changes in
+one step is how a memory bug becomes unattributable.
+**Found by:** writing the note that explains why the test was wrong. Asking "what
+else does this contract imply?" produced the answer in about a minute, and the
+answer was a limitation on the critical path.
+**Lesson:** the useful question after fixing an ownership bug is not "is the fix
+correct?" but "what else does this rule make impossible?" The rule here —
+destroy frees what is mapped — makes sharing impossible, and sharing is how IPC
+avoids copying every message through the kernel. It is now written in `hal.h` and
+in the compatibility plan rather than waiting to be discovered by the first
+person to try a shared buffer.
+
+---
+
+### A process that exited and was never released
+
+**Milestone:** v0.6
+**Symptom:** init ran, exited with code 0, its thread was reaped — and its
+process stayed in the table forever, holding a pid and an address space. Nothing
+failed. The boot test passed, every marker was present, and no assertion fired.
+**Cause:** the system call exit path did not go through `process_exit`. It marked
+the thread a zombie by hand and called `thread_exit()` directly:
+
+```c
+if (s_user_thread != NULL) {
+    s_user_thread->state = AF_THREAD_ZOMBIE;   /* terminates the THREAD */
+}
+thread_exit();
+```
+
+That terminates the thread and says nothing about the process. The process stayed
+`AF_PROCESS_ALIVE`, so the reaper's condition — reap when the thread count is
+zero AND the state is zombie — never became true.
+**Fix:** `sys_exit` calls `process_exit(code)`, which sets the exit code, marks
+the process a zombie, wakes a waiting parent, and then terminates the thread.
+`process_exit` already handled a thread with no process, so nothing needed
+checking at the call site. The now-dead `s_user_thread` global was removed with
+it — state that is written and never read looks like it means something.
+**Found by:** reading the boot log for a line that *should* have been there.
+Every other process logged "reaping pid N"; init's did not. Nothing was missing
+from the list of things the test checks, which is exactly why this is worth
+recording: a leak that passes every assertion is found by reading the evidence,
+not by running the tests.
+**Lesson:** the manual zombie-marking was there before processes existed, and it
+was correct then because there was nothing else to terminate. When the process
+object arrived, that line became a second, weaker implementation of what
+`process_exit` does — and the weaker one was on the path that mattered. When a
+new abstraction subsumes an old line of code, the old line has to be found and
+removed, and the way to find it is to grep for the state it manipulates rather
+than to trust that the new path is the only one.
+
+---
+
 ## 2026 — Entries from the universal-compatibility work
 
 ### The detector knew a file was runnable when it was not

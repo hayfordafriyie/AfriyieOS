@@ -74,14 +74,18 @@ typedef struct af_thread {
     void               *wait_obj;        // what it is blocked on, for diagnostics
     char                name[AF_THREAD_NAME_LEN];
 
-    // The page-table root this thread runs on, or 0 for the kernel's own.
+    // The process this thread belongs to, or NULL for a kernel thread.
     //
-    // A user thread carries a private address space; every kernel thread shares
-    // the kernel's. The scheduler installs this on each switch, so a thread's
-    // memory is a property of the thread rather than of whatever ran last —
-    // which is what makes "the kernel is mapped everywhere" a fact the kernel
-    // can rely on instead of a hope.
-    af_u64              addr_space;
+    // The ADDRESS SPACE IS NOT HERE, and that is deliberate. A thread does not
+    // own memory; a process does. Two threads of one program have to share an
+    // address space, and a thread that owned one could not. The effective root
+    // for a switch is `process ? process->addr_space : the kernel's`, so a
+    // kernel thread is simply the case where the pointer is NULL rather than a
+    // second mechanism.
+    //
+    // See kernel/include/afriyie/process.h for what moved and why.
+    struct af_process  *process;
+    struct af_thread   *process_next;    // the process's thread list
 
     struct af_thread   *next;            // run-queue link
 } af_thread_t;

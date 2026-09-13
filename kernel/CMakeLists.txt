@@ -42,6 +42,12 @@ set(AF_KERNEL_SOURCES
     # them shares, and the piece that can be tested before any of them exist.
     core/binfmt.c
     core/binfmt_selftest.c
+    # --- v0.6: processes ---
+    # The object a capability table will hang from and an IPC endpoint will be
+    # addressed by. Both of those are prerequisites for every foreign personality
+    # (ADR-012), which is why the process exists before any personality does.
+    core/process.c
+    core/process_selftest.c
 )
 
 # -----------------------------------------------------------------------------
