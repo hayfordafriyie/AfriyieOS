@@ -22,6 +22,10 @@ set(AF_KERNEL_SOURCES
     # --- v0.2: memory subsystem ---
     core/pmm.c
     core/heap.c
+    # --- v0.2: multitasking ---
+    core/irq.c
+    core/thread.c
+    core/sched.c
 )
 
 # -----------------------------------------------------------------------------
@@ -35,6 +39,7 @@ if(AF_TARGET STREQUAL "x86_64")
         arch/x86_64/serial.c
         arch/x86_64/gdt.c
         arch/x86_64/idt.c
+        arch/x86_64/timer.c
         arch/x86_64/arch.c
     )
 
@@ -42,6 +47,7 @@ if(AF_TARGET STREQUAL "x86_64")
         arch/x86_64/entry.asm
         arch/x86_64/isr.asm
         arch/x86_64/cpu.asm
+        arch/x86_64/context.asm
     )
 elseif(AF_TARGET STREQUAL "aarch64")
     message(FATAL_ERROR

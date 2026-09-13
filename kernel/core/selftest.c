@@ -17,6 +17,9 @@
 #include "afriyie/fb.h"
 #include "afriyie/pmm.h"
 #include "afriyie/heap.h"
+#include "afriyie/thread.h"
+#include "afriyie/sched.h"
+#include "afriyie/spinlock.h"
 
 static af_u32 s_passed = 0;
 static af_u32 s_failed = 0;
@@ -350,6 +353,194 @@ static void test_framebuffer(void)
     af_fb_measure_text("abcd", 2, &w, &h);
     CHECK(w == 4 * AF_FONT_WIDTH * 2);
     CHECK(h == AF_FONT_HEIGHT * 2);
+}
+
+// =============================================================================
+// v0.2 acceptance test — two threads printing A and B, interleaved
+// =============================================================================
+//
+// This is the milestone's acceptance criterion from the blueprint: "create two
+// threads that each loop printing A and B, and assert they alternate under
+// preemption". It runs after the scheduler is up, from the boot thread, because
+// it needs to create threads and then wait for them.
+//
+// It checks three things:
+//
+//   1. BOTH threads ran to completion. A scheduler that starves one thread
+//      passes any test that only counts total iterations.
+//   2. The interleaving is real. If A completes entirely before B starts, the
+//      threads were never actually concurrent — the scheduler ran them
+//      sequentially, which a naive implementation does whenever it picks from
+//      the run queue without ever preempting.
+//   3. Sleep and wake work, since the wait itself uses sched_sleep.
+// =============================================================================
+
+#define SCHED_TEST_ITERATIONS 200
+#define SCHED_TEST_MAX_LOG    (SCHED_TEST_ITERATIONS * 2)
+
+static char           s_sched_log[SCHED_TEST_MAX_LOG];
+static volatile af_u32 s_sched_log_len = 0;
+static volatile af_u32 s_alpha_progress = 0;
+static volatile af_u32 s_beta_progress = 0;
+static af_spinlock_t  s_sched_log_lock = AF_SPINLOCK_INIT;
+
+static void sched_record(char letter)
+{
+    af_spin_lock(&s_sched_log_lock);
+
+    if (s_sched_log_len < SCHED_TEST_MAX_LOG) {
+        s_sched_log[s_sched_log_len++] = letter;
+    }
+
+    af_spin_unlock(&s_sched_log_lock);
+}
+
+static void alpha_thread(void *arg)
+{
+    AF_UNUSED(arg);
+
+    for (af_u32 i = 0; i < SCHED_TEST_ITERATIONS; i++) {
+        sched_record('A');
+        s_alpha_progress = i + 1;
+
+        // Yield so the other thread gets a turn. Without this the test would
+        // pass on preemption alone, which is not what a cooperative round-robin
+        // scheduler is supposed to demonstrate.
+        sched_yield();
+    }
+}
+
+static void beta_thread(void *arg)
+{
+    AF_UNUSED(arg);
+
+    for (af_u32 i = 0; i < SCHED_TEST_ITERATIONS; i++) {
+        sched_record('B');
+        s_beta_progress = i + 1;
+
+        // No yield here. Beta is preempted by the timer tick, which is the
+        // behaviour actually under test.
+    }
+}
+
+void af_sched_selftest(void)
+{
+    af_info("test", "scheduler acceptance test: two threads, %u iterations each",
+            (af_u32)SCHED_TEST_ITERATIONS);
+
+    s_sched_log_len = 0;
+    s_alpha_progress = 0;
+    s_beta_progress = 0;
+
+    af_thread_t *alpha = thread_create("alpha", alpha_thread, NULL,
+                                       AF_KERNEL_STACK_SIZE, AF_PRIO_DEFAULT);
+    af_thread_t *beta  = thread_create("beta", beta_thread, NULL,
+                                       AF_KERNEL_STACK_SIZE, AF_PRIO_DEFAULT);
+
+    if (alpha == NULL || beta == NULL) {
+        af_error("test", "  FAIL could not create the test threads");
+        af_log_raw(AF_BOOT_MARKER_FAIL "sched_thread_create\n");
+        af_panic("scheduler test: thread creation failed");
+    }
+
+    // A created thread is not runnable until it is admitted to a run queue.
+    sched_admit(alpha);
+    sched_admit(beta);
+
+    // Let them run. Using sched_sleep exercises the sleeping path as well as the
+    // scheduler itself.
+    af_u32 waited = 0;
+    while ((s_alpha_progress < SCHED_TEST_ITERATIONS ||
+            s_beta_progress < SCHED_TEST_ITERATIONS) && waited < 2000) {
+        sched_sleep(1);
+        waited++;
+    }
+
+    // --- 1. both threads completed -------------------------------------------
+    if (s_alpha_progress != SCHED_TEST_ITERATIONS) {
+        af_panic("scheduler test: alpha reached %u of %u iterations — the "
+                 "scheduler starved it", s_alpha_progress,
+                 (af_u32)SCHED_TEST_ITERATIONS);
+    }
+    if (s_beta_progress != SCHED_TEST_ITERATIONS) {
+        af_panic("scheduler test: beta reached %u of %u iterations — the "
+                 "scheduler starved it", s_beta_progress,
+                 (af_u32)SCHED_TEST_ITERATIONS);
+    }
+    af_log(AF_LOG_DEBUG, "test", "  ok   both threads ran to completion "
+                                  "(%u iterations each; waited %u ticks)",
+           (af_u32)SCHED_TEST_ITERATIONS, waited);
+
+    // --- 2. the interleaving is real -----------------------------------------
+    af_u32 length = s_sched_log_len;
+    if (length != SCHED_TEST_MAX_LOG) {
+        af_panic("scheduler test: recorded %u entries, expected %u",
+                 length, (af_u32)SCHED_TEST_MAX_LOG);
+    }
+
+    af_u32 transitions = 0;
+    af_u32 a_count = 0;
+    af_u32 b_count = 0;
+    af_u32 longest_run = 1;
+    af_u32 run = 1;
+
+    for (af_u32 i = 0; i < length; i++) {
+        if (s_sched_log[i] == 'A') {
+            a_count++;
+        } else {
+            b_count++;
+        }
+
+        if (i > 0) {
+            if (s_sched_log[i] != s_sched_log[i - 1]) {
+                transitions++;
+                run = 1;
+            } else {
+                run++;
+                if (run > longest_run) {
+                    longest_run = run;
+                }
+            }
+        }
+    }
+
+    if (a_count != SCHED_TEST_ITERATIONS || b_count != SCHED_TEST_ITERATIONS) {
+        af_panic("scheduler test: %u A and %u B recorded, expected %u of each",
+                 a_count, b_count, (af_u32)SCHED_TEST_ITERATIONS);
+    }
+
+    // A sequential run would show exactly one transition: all of A, then all of
+    // B. Real concurrency shows many. The threshold is deliberately loose — the
+    // exact figure depends on the tick rate and how fast the machine is — but a
+    // scheduler that never preempts produces a single transition and fails this
+    // immediately.
+    if (transitions < 10) {
+        af_panic("scheduler test: only %u A/B transitions in %u entries — the "
+                 "threads ran sequentially rather than concurrently",
+                 transitions, length);
+    }
+
+    if (longest_run > 64) {
+        af_panic("scheduler test: one thread ran %u times consecutively — "
+                 "preemption is not working", longest_run);
+    }
+
+    af_log(AF_LOG_DEBUG, "test",
+           "  ok   %u A/B transitions, longest run %u — threads interleaved",
+           transitions, longest_run);
+
+    // --- 3. show a sample so a human can see it ------------------------------
+    {
+        char sample[96];
+        af_u32 n = (length < 60) ? length : 60;
+        for (af_u32 i = 0; i < n; i++) {
+            sample[i] = s_sched_log[i];
+        }
+        sample[n] = '\0';
+        af_info("test", "  first %u entries: %s", n, sample);
+    }
+
+    af_marker("AF_SCHED_OK");
 }
 
 // -----------------------------------------------------------------------------

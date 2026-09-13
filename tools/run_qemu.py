@@ -42,6 +42,13 @@ BOOT_MARKERS = [
 
 # Ordered milestone markers. Missing any of these means a subsystem did not
 # reach its ready state even if the boot completed.
+#
+# ORDER IS THE POINT. The runner stops the moment every marker is present, so a
+# marker that is listed out of sequence — or missing from this list entirely —
+# makes the test pass early and silently skip everything after it. That happened
+# during v0.2: AF_BOOT_OK was the last expected marker, so the boot test declared
+# success and killed QEMU before the scheduler had even started, and the
+# multitasking work looked like it was passing when it had never run.
 EXPECTED_MARKERS = [
     "AF_GDT_READY",
     "AF_IDT_READY",
@@ -49,6 +56,9 @@ EXPECTED_MARKERS = [
     "AF_HEAP_READY",
     "AF_TEST_OK",
     "AF_BOOT_OK",
+    "AF_TIMER_READY",
+    "AF_SCHED_READY",
+    "AF_SCHED_OK",
 ]
 
 FATAL_MARKERS = [

@@ -6,6 +6,7 @@
 #include "afriyie/assert.h"
 #include "afriyie/io.h"
 #include "afriyie/arch_hooks.h"
+#include "afriyie/spinlock.h"
 
 // -----------------------------------------------------------------------------
 // State
@@ -62,12 +63,51 @@ void af_log_raw_n(const char *text, af_size len)
         return;
     }
 
+    // =========================================================================
+    // THE LOG IS SHARED STATE ONCE MORE THAN ONE THREAD EXISTS
+    // =========================================================================
+    // Without this lock, two threads printing at the same time interleave their
+    // bytes in the sink. The output is not merely ugly — it is unusable: a line
+    // is assembled from fragments of two different messages, timestamps run into
+    // each other, and lines vanish entirely.
+    //
+    // The first v0.2 scheduler run produced exactly that, which made a real
+    // crash much harder to read. A log you cannot trust is worse than no log,
+    // because you draw conclusions from it.
+    //
+    // af_spin_lock disables interrupts as it takes the lock, and the lock is
+    // never held across a context switch, so a thread cannot be preempted while
+    // holding it and leave the timer handler spinning. The panic path below
+    // deliberately bypasses this: a panic must print even if the lock is held by
+    // the thread that panicked.
+    // =========================================================================
+    static af_spinlock_t sink_lock = AF_SPINLOCK_INIT;
+
+    if (s_sink != NULL) {
+        af_spin_lock(&sink_lock);
+        s_sink(text, len, s_sink_ctx);
+        af_spin_unlock(&sink_lock);
+        return;
+    }
+
+    // No sink: fall back to the architecture console one character at a time.
+    for (af_size i = 0; i < len; i++) {
+        af_arch_console_putc(text[i]);
+    }
+}
+
+// Unlocked variant, for the panic path and for use before the scheduler exists.
+void af_log_raw_unlocked(const char *text, af_size len)
+{
+    if (text == NULL || len == 0) {
+        return;
+    }
+
     if (s_sink != NULL) {
         s_sink(text, len, s_sink_ctx);
         return;
     }
 
-    // No sink: fall back to the architecture console one character at a time.
     for (af_size i = 0; i < len; i++) {
         af_arch_console_putc(text[i]);
     }

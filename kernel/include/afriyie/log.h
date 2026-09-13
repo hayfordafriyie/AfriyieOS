@@ -50,9 +50,14 @@ af_log_level_t af_log_get_level(void);
 void af_log_register_time_source(af_u64 (*fn)(void));
 
 // Raw write — used by the panic handler and the boot bridge before the
-// formatting layer is ready.
+// formatting layer is ready. Serialised against concurrent threads.
 void af_log_raw(const char *text);
 void af_log_raw_n(const char *text, af_size len);
+
+// Unserialised raw write. Used by the panic path, which must print even if the
+// lock is held by the very thread that panicked, and before the scheduler exists
+// so that no lock is taken during early boot.
+void af_log_raw_unlocked(const char *text, af_size len);
 
 // -----------------------------------------------------------------------------
 // Formatted logging

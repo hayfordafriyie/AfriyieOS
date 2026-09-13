@@ -6,6 +6,7 @@
 #include "afriyie/log.h"
 #include "afriyie/assert.h"
 #include "afriyie/kstring.h"
+#include "afriyie/hal.h"     // irq_dispatch, the generic IRQ layer
 
 // -----------------------------------------------------------------------------
 // IDT gate descriptor
@@ -123,11 +124,76 @@ static void pic_remap(void)
     af_outb(PIC2_DATA, 0x01);
     af_io_wait();
 
-    // Restore the masks, but mask everything for now: v0.1 has no interrupt
-    // handlers installed, and an unexpected IRQ would arrive as a spurious
-    // vector with nothing to service it.
+    // Restore the masks, then mask everything. Lines are unmasked individually
+    // by af_x86_pic_enable() once a handler is actually registered — an
+    // interrupt with nothing to service it is worse than a masked one.
     af_outb(PIC1_DATA, mask1 | 0xFF);
     af_outb(PIC2_DATA, mask2 | 0xFF);
+}
+
+void af_x86_pic_mask_all(void)
+{
+    af_outb(PIC1_DATA, 0xFF);
+    af_outb(PIC2_DATA, 0xFF);
+}
+
+void af_x86_pic_enable(af_u32 irq)
+{
+    if (irq >= AF_X86_PIC_IRQ_COUNT) {
+        return;
+    }
+
+    if (irq < 8) {
+        af_u8 mask = af_inb(PIC1_DATA);
+        af_outb(PIC1_DATA, (af_u8)(mask & ~(1u << irq)));
+    } else {
+        // Unmask the slave line, and IRQ2 on the master — the cascade line the
+        // slave's interrupts actually arrive through. Forgetting IRQ2 produces
+        // the maddening symptom of a working IRQ0-7 and a completely dead
+        // IRQ8-15.
+        af_u8 mask2 = af_inb(PIC2_DATA);
+        af_outb(PIC2_DATA, (af_u8)(mask2 & ~(1u << (irq - 8))));
+
+        af_u8 mask1 = af_inb(PIC1_DATA);
+        af_outb(PIC1_DATA, (af_u8)(mask1 & ~(1u << 2)));
+    }
+}
+
+void af_x86_pic_disable(af_u32 irq)
+{
+    if (irq >= AF_X86_PIC_IRQ_COUNT) {
+        return;
+    }
+
+    if (irq < 8) {
+        af_u8 mask = af_inb(PIC1_DATA);
+        af_outb(PIC1_DATA, (af_u8)(mask | (1u << irq)));
+    } else {
+        af_u8 mask = af_inb(PIC2_DATA);
+        af_outb(PIC2_DATA, (af_u8)(mask | (1u << (irq - 8))));
+    }
+}
+
+void af_x86_pic_ack(af_u32 irq)
+{
+    // The slave must be acknowledged before the master, because the master's
+    // IRQ2 is what carries the slave's request.
+    if (irq >= 8) {
+        af_outb(PIC2_COMMAND, PIC_EOI);
+    }
+    af_outb(PIC1_COMMAND, PIC_EOI);
+}
+
+bool af_x86_pic_is_masked(af_u32 irq)
+{
+    if (irq >= AF_X86_PIC_IRQ_COUNT) {
+        return true;
+    }
+
+    if (irq < 8) {
+        return (af_inb(PIC1_DATA) & (1u << irq)) != 0;
+    }
+    return (af_inb(PIC2_DATA) & (1u << (irq - 8))) != 0;
 }
 
 // -----------------------------------------------------------------------------
@@ -256,16 +322,11 @@ void isr_dispatch(isr_frame_t *frame)
     if (vector >= AF_IRQ_BASE && vector < AF_IRQ_BASE + AF_IRQ_COUNT_PIC) {
         af_u32 irq = (af_u32)(vector - AF_IRQ_BASE);
 
-        // v0.1 masks every line, so reaching here means something enabled one.
-        af_warn("irq", "unexpected IRQ%u on vector 0x%X (masked; not serviced)",
-                irq, (af_u32)vector);
-
-        // Send End-Of-Interrupt so the PIC does not wedge, including to the
-        // slave PIC for IRQ8..15 (which arrive through the master's IRQ2).
-        if (irq >= 8) {
-            af_outb(PIC2_COMMAND, PIC_EOI);
-        }
-        af_outb(PIC1_COMMAND, PIC_EOI);
+        // Hand off to the generic IRQ layer in kernel/core/irq.c, which chains
+        // the registered handlers and acknowledges the PIC. A line with no
+        // handler is counted and reported occasionally rather than panicking:
+        // a masked-but-firing line is noise, not a fault.
+        irq_dispatch(irq);
         return;
     }
 

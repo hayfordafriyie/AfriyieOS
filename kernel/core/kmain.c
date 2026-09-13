@@ -33,6 +33,12 @@
 #include "afriyie/kstring.h"
 #include "afriyie/pmm.h"
 #include "afriyie/heap.h"
+#include "afriyie/thread.h"
+#include "afriyie/sched.h"
+
+// Defined at the bottom of this file. Declared here because kmain creates the
+// idle thread before the definition appears.
+static void idle_thread_entry(void *arg);
 
 // -----------------------------------------------------------------------------
 // Recovery path
@@ -229,24 +235,92 @@ void kmain(af_boot_info_t *boot_info)
     af_info("boot", "%s %s ready — kernel is alive", AF_NAME, AF_VERSION_STRING);
     af_marker(AF_BOOT_MARKER_OK);
 
-    if (af_fb_available()) {
-        char line[128];
-        af_snprintf(line, sizeof(line), "Hello from AfriyieOS v%s", AF_VERSION_STRING);
-        af_fb_console_write("\n", 1);
-        af_fb_console_write(line, af_strlen(line));
-        af_fb_console_write("\n", 1);
+    // -------------------------------------------------------------------------
+    // 10. Multitasking
+    //
+    // Everything above this point ran on one context. From here the boot context
+    // becomes the idle thread, the PIT drives a 100 Hz tick, and threads can be
+    // created, preempted and scheduled.
+    //
+    // Order matters: the scheduler needs the boot context adopted as a thread
+    // before it can switch away from it, and the timer IRQ must be registered
+    // and unmasked only once the scheduler is ready to receive a tick.
+    // -------------------------------------------------------------------------
+    af_thread_t *boot_thread = thread_adopt_current("boot");
+    if (boot_thread == NULL) {
+        boot_failed(AF_ERR_NOMEM, "adopting the boot context as a thread");
     }
+
+    // A SEPARATE idle thread, deliberately not the boot context. Blocking or
+    // sleeping the idle thread is refused by the scheduler — it would deadlock
+    // the machine — so if the boot context were also idle, every sleep in the
+    // boot path would silently do nothing.
+    af_thread_t *idle_thread = thread_create("idle", idle_thread_entry, NULL,
+                                             AF_KERNEL_STACK_SIZE, AF_PRIO_IDLE);
+    if (idle_thread == NULL) {
+        boot_failed(AF_ERR_NOMEM, "creating the idle thread");
+    }
+
+    rc = sched_init(boot_thread, idle_thread);
+    if (af_status_err(rc)) {
+        boot_failed(rc, "scheduler initialisation");
+    }
+
+    sched_admit(idle_thread);
+
+    // A coarse clock for log timestamps, now that something can count ticks.
+    af_log_register_time_source(hal_time_ns);
+
+    // hal_timer_init programs the PIT, registers the IRQ0 handler and unmasks
+    // the line. The scheduler is already up, so the first tick finds somewhere
+    // to go.
+    rc = hal_timer_init(AF_SCHED_TICK_HZ);
+    if (af_status_err(rc)) {
+        boot_failed(rc, "timer initialisation");
+    }
+
+    af_marker("AF_SCHED_READY");
+
+    // Interrupts have been off since the boot bridge called `cli`. The timer
+    // tick, and therefore all preemption, needs them on — and so does the idle
+    // `hlt` loop, which would otherwise stop the CPU permanently with no way to
+    // wake it.
+    af_interrupts_enable();
+
+    // The v0.2 acceptance test: two threads printing A and B.
+    af_sched_selftest();
+
+    sched_dump_state();
 
     // -------------------------------------------------------------------------
     // Idle
     //
-    // v0.1 has no scheduler (that is v0.2). Halting in a loop until the next
-    // interrupt is the correct idle behaviour, and it is what QEMU stays in
-    // until the test harness shuts the machine down.
+    // The boot thread's job is done. It stays runnable at default priority so
+    // the machine has something to do, and yields rather than halting: the
+    // dedicated idle thread is the one that halts the CPU.
     // -------------------------------------------------------------------------
-    af_interrupts_enable();
+    for (;;) {
+        sched_collect_zombies();
+        sched_yield();
+    }
+}
+
+// -----------------------------------------------------------------------------
+// The idle thread
+//
+// Runs only when nothing else can. Zombie thread structures are reaped HERE
+// rather than in thread_exit(), because a thread cannot free the stack it is
+// standing on — and this is the one context guaranteed not to belong to an
+// exiting thread.
+// -----------------------------------------------------------------------------
+static void idle_thread_entry(void *arg)
+{
+    AF_UNUSED(arg);
+
+    af_info("sched", "idle thread running (tid %u)", thread_current()->tid);
 
     for (;;) {
+        sched_collect_zombies();
         af_halt();
     }
 }

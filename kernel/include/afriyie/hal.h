@@ -83,6 +83,11 @@ void   hal_irq_disable_globally(void);
 
 #define HAL_IRQ_COUNT 256
 
+// Generic IRQ dispatch. Defined in kernel/core/irq.c; called by the per-arch
+// interrupt entry once it has worked out which IRQ line fired.
+void irq_dispatch(af_u32 irq);
+void irq_dump_stats(void);
+
 // =============================================================================
 // Memory — architecture-specific page table manipulation
 //

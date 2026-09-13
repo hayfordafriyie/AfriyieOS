@@ -21,6 +21,15 @@ bool af_x86_serial_is_ready(void);
 // Log sink adapter: wires the serial writer into af_log_set_sink().
 void af_x86_log_sink(const char *text, af_size len, void *ctx);
 
+// =============================================================================
+// 8254 PIT timer
+// =============================================================================
+void  af_x86_pit_init(af_u32 hz);
+void  af_x86_pit_tick(void);      // called from the IRQ0 handler
+af_u64 af_x86_pit_ticks(void);
+af_u32 af_x86_pit_hz(void);
+af_u64 af_x86_time_ns(void);
+
 #define AF_COM1_PORT 0x3F8
 
 // =============================================================================
@@ -96,6 +105,16 @@ void af_x86_set_fault_frame(const isr_frame_t *frame);
 
 // Human-readable exception name, e.g. "#PF page fault". Never returns NULL.
 const char *af_x86_exception_name(af_u64 vector);
+
+// --- 8259 PIC control, used by the generic IRQ layer in kernel/core/irq.c -----
+#define AF_X86_PIC_IRQ_BASE 0x20
+#define AF_X86_PIC_IRQ_COUNT 16
+
+void af_x86_pic_mask_all(void);
+void af_x86_pic_enable(af_u32 irq);
+void af_x86_pic_disable(af_u32 irq);
+void af_x86_pic_ack(af_u32 irq);
+bool af_x86_pic_is_masked(af_u32 irq);
 
 // Decodes the x86_64 page-fault error code into a written description.
 void af_x86_describe_page_fault(af_u64 error_code, char *out, af_size out_size);

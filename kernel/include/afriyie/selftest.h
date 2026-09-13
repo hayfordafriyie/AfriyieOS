@@ -14,4 +14,10 @@
 // state, and continuing would hide it.
 void af_selftest_run_all(void);
 
+// The v0.2 acceptance test: two threads printing A and B, asserting they both
+// complete and that their output genuinely interleaves. Separate from the runner
+// above because it must run AFTER the scheduler is up, which is later in the
+// boot sequence than the rest of the self tests.
+void af_sched_selftest(void);
+
 #endif // AFRIYIE_SELFTEST_H
