@@ -10,6 +10,8 @@
 #include "afriyie/config.h"
 #include "afriyie/types.h"
 #include "afriyie/log.h"
+#include "afriyie/assert.h"     // af_panic, for the hard stop on a failed test
+#include "afriyie/selftest.h"   // the declaration of the runner itself
 #include "afriyie/kstring.h"
 #include "afriyie/boot_info.h"
 #include "afriyie/fb.h"

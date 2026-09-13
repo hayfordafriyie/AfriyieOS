@@ -4,6 +4,13 @@
 #ifndef AFRIYIE_CONFIG_H
 #define AFRIYIE_CONFIG_H
 
+// AF_KIB is defined in types.h, and the page-size sanity check at the bottom of
+// this file uses it. Without this include the preprocessor silently treats the
+// unknown identifier as 0, and `#if AF_PAGE_SIZE != 4096` fires on a correct
+// build. That is a genuinely nasty failure: the error message is right there but
+// the cause is a missing include twelve lines up.
+#include "types.h"
+
 // -----------------------------------------------------------------------------
 // Identity
 // -----------------------------------------------------------------------------

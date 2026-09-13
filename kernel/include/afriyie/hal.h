@@ -19,6 +19,7 @@
 
 #include "types.h"
 #include "boot_info.h"
+#include "status.h"   // af_status_t, the return type of most of this interface
 
 // =============================================================================
 // Early boot — called by kmain() in this exact order

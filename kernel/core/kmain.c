@@ -20,18 +20,17 @@
 
 #include "afriyie/config.h"
 #include "afriyie/types.h"
+#include "afriyie/status.h"
 #include "afriyie/boot_info.h"
 #include "afriyie/log.h"
 #include "afriyie/assert.h"
 #include "afriyie/io.h"
 #include "afriyie/fb.h"
 #include "afriyie/splash.h"
+#include "afriyie/selftest.h"
 #include "afriyie/hal.h"
 #include "afriyie/arch_hooks.h"
 #include "afriyie/kstring.h"
-
-// Implemented in kernel/core/selftest.c
-void af_selftest_run_all(void);
 
 // -----------------------------------------------------------------------------
 // Recovery path

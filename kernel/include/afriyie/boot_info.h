@@ -22,6 +22,7 @@
 
 #include "types.h"
 #include "config.h"
+#include "status.h"   // af_status_t, used by the validation entry points below
 
 // -----------------------------------------------------------------------------
 // Identification

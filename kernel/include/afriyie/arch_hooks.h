@@ -12,6 +12,15 @@
 #include "types.h"
 #include "boot_info.h"
 
+// The kernel entry point, called by the boot bridge with interrupts disabled on
+// a private stack and no runtime environment of any kind. Never returns.
+//
+// Declared here because both sides of the boundary need the type: kmain.c
+// defines it, and the entry stub in kernel/arch/<arch>/ calls it. Without a
+// declaration the definition trips -Wmissing-declarations, which is exactly the
+// warning that catches a signature that has drifted away from its caller.
+void kmain(af_boot_info_t *boot_info);
+
 // Dumps architecture-specific CPU state (registers, fault address, stack trace)
 // during a panic. Called by af_panic_at() after the message is printed.
 void af_arch_panic_dump(void);

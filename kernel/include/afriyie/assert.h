@@ -7,6 +7,7 @@
 #include "types.h"
 #include "config.h"
 #include "log.h"
+#include "status.h"   // af_status_t and af_status_err, used by AF_TRY below
 
 #ifndef AF_ASSERT_ENABLED
 #  define AF_ASSERT_ENABLED 1

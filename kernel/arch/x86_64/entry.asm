@@ -19,6 +19,12 @@ section .text
 global kernel_entry
 extern kmain
 
+; Provided by the linker script. They are not defined in this file, so NASM must
+; be told they are external — without these two lines the assembly fails with
+; "symbol `__bss_start' not defined".
+extern __bss_start
+extern __bss_end
+
 kernel_entry:
     cli                         ; no interrupts until the IDT exists
 
@@ -44,8 +50,14 @@ kernel_entry:
     ; is safe because the loop uses only registers and rep stosb walks upward
     ; from __bss_start, away from the stack we are about to use.
     ; -------------------------------------------------------------------------
-    mov rdi, __bss_start
-    mov rcx, __bss_end
+    ; RIP-relative `lea` rather than `mov rdi, __bss_start`. Both produce the
+    ; address, but `lea` is a fixed 7-byte instruction with a PC-relative
+    ; relocation, whereas `mov reg, extern_symbol` needs a 64-bit absolute
+    ; relocation whose size NASM cannot settle until the symbol is resolved.
+    ; That size ambiguity is what produces NASM's "label changed during code
+    ; generation" error on the branches below.
+    lea rdi, [rel __bss_start]
+    lea rcx, [rel __bss_end]
     sub rcx, rdi
     xor eax, eax
     rep stosb

@@ -316,9 +316,8 @@ void isr_dispatch(isr_frame_t *frame)
     af_log_raw(isr_frame_from_user(frame) ? "user mode (CPL 3)" : "kernel mode (CPL 0)");
     af_log_raw("\n");
 
-    // The frame pointer is passed to the panic report so af_arch_panic_dump()
-    // can print every register and a stack trace.
-    extern void af_x86_set_fault_frame(const isr_frame_t *frame);
+    // The frame pointer is recorded so af_arch_panic_dump() can print every
+    // register and the raw stack. Declared in x86_64.h.
     af_x86_set_fault_frame(frame);
 
     af_panic("unhandled CPU exception %s (vector %u)",

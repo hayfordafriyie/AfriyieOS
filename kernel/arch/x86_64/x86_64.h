@@ -8,6 +8,7 @@
 #define AFRIYIE_ARCH_X86_64_H
 
 #include "afriyie/types.h"
+#include "afriyie/status.h"   // af_status_t, the return type of the init entry points
 
 // =============================================================================
 // Serial console (COM1)
@@ -87,6 +88,11 @@ af_status_t af_x86_idt_init(void);
 
 // Called from isr_common. Defined in isr.c.
 void isr_dispatch(isr_frame_t *frame);
+
+// Records the frame captured by isr_dispatch so the panic dump can print the
+// register set that faulted. Separate from isr_dispatch because the panic path
+// is in the generic core, which knows nothing about x86_64 frames.
+void af_x86_set_fault_frame(const isr_frame_t *frame);
 
 // Human-readable exception name, e.g. "#PF page fault". Never returns NULL.
 const char *af_x86_exception_name(af_u64 vector);

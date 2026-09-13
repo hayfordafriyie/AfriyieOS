@@ -24,14 +24,33 @@
 
 #include "afriyie/types.h"
 
+// =============================================================================
+// ALIGNMENT RULE FOR THIS FILE
+// =============================================================================
+// Firmware structures use NATURAL alignment, not packing. UEFI firmware is
+// compiled as ordinary C, so its structures are laid out with the ABI's normal
+// padding — which on x86_64 means four bytes of padding after the u32
+// FirmwareRevision field in EFI_SYSTEM_TABLE before the next pointer.
+//
+// Marking those structures AF_PACKED produces a layout that is four bytes
+// narrow from that point on, and reading ConOut from a packed struct returns
+// garbage — an instant triple fault with no output at all.
+//
+// So: no AF_PACKED on any structure the firmware produces. Every size and the
+// offset of every member we touch is asserted instead, and an assert failure
+// means the layout is wrong, never that the asserted number is.
+//
+// Packing is correct for OUR formats — the boot handoff structure and the
+// on-disk image layouts — because we define those byte for byte.
+// =============================================================================
+
 // -----------------------------------------------------------------------------
 // Fundamental types
 //
 // UEFI uses the Microsoft x64 ABI on x86_64: only rcx/rdx/r8/r9 carry the first
 // four arguments, and the caller reserves 32 bytes of shadow space. The
-// compiler handles this automatically because GNU_EFI applications are built
-// with the Microsoft ABI (see boot/CMakeLists.txt: -maccumulate-outgoing-args
-// and the ms_abi attribute below).
+// compiler handles this automatically for an application linked as a UEFI
+// image; see the ms_abi attribute on the entry point below.
 // -----------------------------------------------------------------------------
 typedef af_u8       EFI_BOOLEAN;
 typedef af_i64      EFI_STATUS;
@@ -43,8 +62,12 @@ typedef af_u16      CHAR16;
 typedef af_u64      EFI_PHYSICAL_ADDRESS;
 typedef af_u64      EFI_VIRTUAL_ADDRESS;
 
+// UEFI error codes have the high bit set. Written as a negative signed constant
+// rather than `(1ULL << 63) | n`: the latter is unsigned, which makes every
+// comparison against EFI_STATUS trip -Wsign-compare, and the cast needed to
+// silence that is exactly the kind of cast that later hides a real bug.
+#define EFI_ERR_BIT               (-9223372036854775807LL - 1)   /* INT64_MIN */
 #define EFI_SUCCESS               0
-#define EFI_ERR_BIT               (1ULL << 63)
 #define EFI_LOAD_ERROR            (EFI_ERR_BIT | 1)
 #define EFI_INVALID_PARAMETER     (EFI_ERR_BIT | 2)
 #define EFI_UNSUPPORTED           (EFI_ERR_BIT | 3)
@@ -68,6 +91,9 @@ typedef struct AF_PACKED {
     af_u8  Data4[8];
 } EFI_GUID;
 
+// 4 + 2 + 2 = 8, then the eight Data4 bytes — 16 either way, but assert it: a
+// GUID read at the wrong size silently fails to match the protocol and the
+// failure looks like "the firmware does not support this".
 AF_STATIC_ASSERT_SIZE(EFI_GUID, 16);
 
 // {9042A9DE-23DC-4A38-96FB-7ADED080516A} — EFI_GRAPHICS_OUTPUT_PROTOCOL
@@ -92,7 +118,7 @@ AF_STATIC_ASSERT_SIZE(EFI_GUID, 16);
 // -----------------------------------------------------------------------------
 // Table header
 // -----------------------------------------------------------------------------
-typedef struct AF_PACKED {
+typedef struct {
     af_u64 Signature;
     af_u32 Revision;
     af_u32 HeaderSize;
@@ -128,7 +154,7 @@ typedef enum {
     EfiPersistentMemory        = 14,
 } EFI_MEMORY_TYPE;
 
-typedef struct AF_PACKED {
+typedef struct {
     af_u32                Type;
     af_u32                Pad;
     EFI_PHYSICAL_ADDRESS  PhysicalStart;
@@ -207,7 +233,7 @@ typedef struct AF_PACKED {
     af_u32 ReservedMask;
 } EFI_PIXEL_BITMASK;
 
-typedef struct AF_PACKED {
+typedef struct {
     af_u32                      Version;
     af_u32                      HorizontalResolution;
     af_u32                      VerticalResolution;
@@ -216,7 +242,7 @@ typedef struct AF_PACKED {
     af_u32                      PixelsPerScanLine;
 } EFI_GRAPHICS_OUTPUT_MODE_INFORMATION;
 
-typedef struct AF_PACKED {
+typedef struct {
     af_u32                                MaxMode;
     af_u32                                Mode;
     EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *Info;
@@ -264,6 +290,13 @@ typedef struct {
     EFI_STATUS (*Unload)(EFI_HANDLE ImageHandle);
 } EFI_LOADED_IMAGE_PROTOCOL;
 
+// Naturally aligned: Revision (4) + 4 bytes of padding + everything else.
+AF_STATIC_ASSERT_SIZE(EFI_LOADED_IMAGE_PROTOCOL, 96);
+AF_STATIC_ASSERT_OFFSET(EFI_LOADED_IMAGE_PROTOCOL, Revision, 0);
+AF_STATIC_ASSERT_OFFSET(EFI_LOADED_IMAGE_PROTOCOL, ParentHandle, 8);
+AF_STATIC_ASSERT_OFFSET(EFI_LOADED_IMAGE_PROTOCOL, ImageBase, 64);
+AF_STATIC_ASSERT_OFFSET(EFI_LOADED_IMAGE_PROTOCOL, ImageSize, 72);
+
 // -----------------------------------------------------------------------------
 // Boot services
 //
@@ -299,7 +332,7 @@ typedef EFI_STATUS (*EFI_SET_WATCHDOG_TIMER)(EFI_UINTN Timeout, af_u64 WatchdogC
 typedef void       (*EFI_COPY_MEM)(void *Destination, void *Source, EFI_UINTN Length);
 typedef void       (*EFI_SET_MEM)(void *Buffer, EFI_UINTN Size, af_u8 Value);
 
-typedef struct AF_PACKED {
+typedef struct {
     EFI_TABLE_HEADER  Hdr;
 
     void *RaiseTPL;
@@ -356,27 +389,33 @@ typedef struct AF_PACKED {
     void *CreateEventEx;
 } EFI_BOOT_SERVICES;
 
-// The offsets of the members we actually call. If any of these fires, the
-// member list above has drifted from the specification.
+// The offsets below are the same whether or not this structure is packed,
+// because everything after the 24-byte header is a pointer and 24 is already
+// 8-byte aligned. They are asserted anyway — "it does not matter here" is
+// exactly the reasoning that lets a real offset bug through somewhere it does.
+AF_STATIC_ASSERT_SIZE(EFI_BOOT_SERVICES, 24 + 44 * 8);
 AF_STATIC_ASSERT_OFFSET(EFI_BOOT_SERVICES, AllocatePages, 40);
 AF_STATIC_ASSERT_OFFSET(EFI_BOOT_SERVICES, FreePages, 48);
 AF_STATIC_ASSERT_OFFSET(EFI_BOOT_SERVICES, GetMemoryMap, 56);
 AF_STATIC_ASSERT_OFFSET(EFI_BOOT_SERVICES, AllocatePool, 64);
 AF_STATIC_ASSERT_OFFSET(EFI_BOOT_SERVICES, FreePool, 72);
+AF_STATIC_ASSERT_OFFSET(EFI_BOOT_SERVICES, HandleProtocol, 152);
 AF_STATIC_ASSERT_OFFSET(EFI_BOOT_SERVICES, ExitBootServices, 232);
+AF_STATIC_ASSERT_OFFSET(EFI_BOOT_SERVICES, Stall, 248);
+AF_STATIC_ASSERT_OFFSET(EFI_BOOT_SERVICES, SetWatchdogTimer, 256);
 AF_STATIC_ASSERT_OFFSET(EFI_BOOT_SERVICES, LocateProtocol, 320);
 
 // -----------------------------------------------------------------------------
 // Runtime services (only the header is needed; we do not call any yet)
 // -----------------------------------------------------------------------------
-typedef struct AF_PACKED {
+typedef struct {
     EFI_TABLE_HEADER Hdr;
 } EFI_RUNTIME_SERVICES;
 
 // -----------------------------------------------------------------------------
 // Configuration table
 // -----------------------------------------------------------------------------
-typedef struct AF_PACKED {
+typedef struct {
     EFI_GUID VendorGuid;
     void    *VendorTable;
 } EFI_CONFIGURATION_TABLE;
@@ -384,7 +423,7 @@ typedef struct AF_PACKED {
 // -----------------------------------------------------------------------------
 // System table
 // -----------------------------------------------------------------------------
-typedef struct AF_PACKED {
+typedef struct {
     EFI_TABLE_HEADER Hdr;
     CHAR16          *FirmwareVendor;
     af_u32           FirmwareRevision;
@@ -400,15 +439,33 @@ typedef struct AF_PACKED {
     EFI_CONFIGURATION_TABLE         *ConfigurationTable;
 } EFI_SYSTEM_TABLE;
 
+// -----------------------------------------------------------------------------
+// THE OFFSETS THAT MATTER MOST IN THE ENTIRE BOOT BRIDGE
+//
+// UEFI firmware's EFI_SYSTEM_TABLE is naturally aligned. After the 24-byte
+// header and the u32 FirmwareRevision there are FOUR BYTES OF PADDING before
+// ConsoleInHandle, which pushes ConOut to offset 64 — not 60 as a packed layout
+// would place it.
+//
+// Reading ConOut from a packed struct returns four bytes of the wrong pointer
+// and the very first console write faults before anything can be printed. These
+// asserts exist to make that impossible; if one fires, the structure above is
+// wrong, not the number here.
+// -----------------------------------------------------------------------------
+AF_STATIC_ASSERT_SIZE(EFI_SYSTEM_TABLE, 120);
+AF_STATIC_ASSERT_OFFSET(EFI_SYSTEM_TABLE, Hdr, 0);
 AF_STATIC_ASSERT_OFFSET(EFI_SYSTEM_TABLE, FirmwareVendor, 24);
 AF_STATIC_ASSERT_OFFSET(EFI_SYSTEM_TABLE, FirmwareRevision, 32);
-AF_STATIC_ASSERT_OFFSET(EFI_SYSTEM_TABLE, ConIn, 40);
-AF_STATIC_ASSERT_OFFSET(EFI_SYSTEM_TABLE, ConOut, 56);
-AF_STATIC_ASSERT_OFFSET(EFI_SYSTEM_TABLE, StdErr, 72);
-AF_STATIC_ASSERT_OFFSET(EFI_SYSTEM_TABLE, RuntimeServices, 80);
-AF_STATIC_ASSERT_OFFSET(EFI_SYSTEM_TABLE, BootServices, 88);
-AF_STATIC_ASSERT_OFFSET(EFI_SYSTEM_TABLE, NumberOfTableEntries, 96);
-AF_STATIC_ASSERT_OFFSET(EFI_SYSTEM_TABLE, ConfigurationTable, 104);
+AF_STATIC_ASSERT_OFFSET(EFI_SYSTEM_TABLE, ConsoleInHandle, 40);
+AF_STATIC_ASSERT_OFFSET(EFI_SYSTEM_TABLE, ConIn, 48);
+AF_STATIC_ASSERT_OFFSET(EFI_SYSTEM_TABLE, ConsoleOutHandle, 56);
+AF_STATIC_ASSERT_OFFSET(EFI_SYSTEM_TABLE, ConOut, 64);
+AF_STATIC_ASSERT_OFFSET(EFI_SYSTEM_TABLE, StandardErrorHandle, 72);
+AF_STATIC_ASSERT_OFFSET(EFI_SYSTEM_TABLE, StdErr, 80);
+AF_STATIC_ASSERT_OFFSET(EFI_SYSTEM_TABLE, RuntimeServices, 88);
+AF_STATIC_ASSERT_OFFSET(EFI_SYSTEM_TABLE, BootServices, 96);
+AF_STATIC_ASSERT_OFFSET(EFI_SYSTEM_TABLE, NumberOfTableEntries, 104);
+AF_STATIC_ASSERT_OFFSET(EFI_SYSTEM_TABLE, ConfigurationTable, 112);
 
 // -----------------------------------------------------------------------------
 // The UEFI application entry point.

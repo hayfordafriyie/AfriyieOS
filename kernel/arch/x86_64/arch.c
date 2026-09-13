@@ -16,6 +16,7 @@
 // -----------------------------------------------------------------------------
 static const isr_frame_t *s_fault_frame = NULL;
 
+// Declared in x86_64.h.
 void af_x86_set_fault_frame(const isr_frame_t *frame)
 {
     s_fault_frame = frame;
@@ -183,7 +184,7 @@ void af_arch_cpu_dump(void)
     af_log(AF_LOG_INFO, "cpu", "family %u model %u stepping %u",
            cpu.family, cpu.model, cpu.stepping);
     af_log(AF_LOG_INFO, "cpu", "cpus   : %u logical", cpu.logical_cpus);
-    af_log(AF_LOG_INFO, "cpu", "features: 0x%X (edx) 0x%X (ecx)",
+    af_log(AF_LOG_INFO, "cpu", "features: 0x%lX (edx) 0x%lX (ecx)",
            cpu.feature_edx, cpu.feature_ecx);
 
     if ((cpu.feature_edx & (1u << 0)) == 0) {
@@ -200,7 +201,7 @@ void af_arch_cpu_dump(void)
 // -----------------------------------------------------------------------------
 // CPU identification
 // -----------------------------------------------------------------------------
-static AF_INLINE void cpu_brand_string(char *out, af_size out_size)
+static inline void cpu_brand_string(char *out, af_size out_size)
 {
     af_u32 regs[4];
 

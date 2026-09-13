@@ -204,11 +204,11 @@ void af_boot_info_dump(const af_boot_info_t *bi)
     af_info("boot", "boot flags      : 0x%X", bi->boot_flags);
     af_info("boot", "cpus            : %u", bi->cpu_count);
     af_info("boot", "firmware page   : %u bytes", bi->page_size);
-    af_info("boot", "kernel phys     : 0x%X (%u KiB)",
+    af_info("boot", "kernel phys     : 0x%lX (%llu KiB)",
             bi->kernel_phys_base, bi->kernel_phys_size / AF_KIB);
 
     if ((bi->boot_flags & AF_BOOT_FLAG_RAMDISK) != 0) {
-        af_info("boot", "ramdisk         : 0x%X (%u KiB)",
+        af_info("boot", "ramdisk         : 0x%lX (%llu KiB)",
                 bi->ramdisk_phys_base, bi->ramdisk_size / AF_KIB);
     } else {
         af_info("boot", "ramdisk         : none");
@@ -216,7 +216,7 @@ void af_boot_info_dump(const af_boot_info_t *bi)
 
     // --- console -------------------------------------------------------------
     if ((bi->boot_flags & AF_BOOT_FLAG_UART) != 0) {
-        af_info("boot", "debug uart      : 0x%X @ %u baud (clk %u Hz, shift %u)",
+        af_info("boot", "debug uart      : 0x%lX @ %u baud (clk %u Hz, shift %u)",
                 bi->console.uart_base, bi->console.uart_baud,
                 bi->console.uart_clock_hz, bi->console.uart_reg_shift);
     } else {
@@ -226,7 +226,7 @@ void af_boot_info_dump(const af_boot_info_t *bi)
     // --- framebuffer ---------------------------------------------------------
     if ((bi->boot_flags & AF_BOOT_FLAG_FRAMEBUFFER) != 0) {
         const af_boot_framebuffer_t *fb = &bi->framebuffer;
-        af_info("boot", "framebuffer     : 0x%X  %ux%u  %u bpp  pitch %u  %s",
+        af_info("boot", "framebuffer     : 0x%lX  %ux%u  %u bpp  pitch %u  %s",
                 fb->address, fb->width, fb->height, fb->bpp, fb->pitch,
                 af_pixel_format_name(fb->format));
 
@@ -244,10 +244,10 @@ void af_boot_info_dump(const af_boot_info_t *bi)
 
     // --- firmware metadata ---------------------------------------------------
     if ((bi->boot_flags & AF_BOOT_FLAG_ACPI) != 0) {
-        af_info("boot", "acpi rsdp       : 0x%X", bi->firmware_info.rsdp);
+        af_info("boot", "acpi rsdp       : 0x%lX", bi->firmware_info.rsdp);
     }
     if ((bi->boot_flags & AF_BOOT_FLAG_DTB) != 0) {
-        af_info("boot", "device tree     : 0x%X (%u bytes)",
+        af_info("boot", "device tree     : 0x%lX (%lu bytes)",
                 bi->firmware_info.dtb, bi->firmware_info.dtb_size);
     }
 
@@ -256,14 +256,19 @@ void af_boot_info_dump(const af_boot_info_t *bi)
     af_paddr top    = af_boot_info_max_address(bi);
 
     af_info("boot", "memory regions  : %u", bi->memory_region_count);
-    af_info("boot", "usable ram      : %u MiB", usable / AF_MIB);
-    af_info("boot", "highest address : 0x%X", top);
+    af_info("boot", "usable ram      : %llu MiB", usable / AF_MIB);
+    af_info("boot", "highest address : 0x%lX", top);
 
     for (af_u32 i = 0; i < bi->memory_region_count; i++) {
         const af_memory_region_t *r = &bi->memory_regions[i];
-        af_info("boot", "  [%2u] 0x%011X - 0x%011X  %8u KiB  %s",
+        // Cast to unsigned long long rather than relying on af_u64 being
+        // `unsigned long` on LP64: the explicit cast keeps the format string
+        // correct on any host, and a wrong format string is a real bug, not a
+        // formatting nit — it reads the wrong 8 bytes off the varargs stack.
+        af_info("boot", "  [%2u] 0x%011lX - 0x%011lX  %8llu KiB  %s",
                 i, r->base, r->base + r->length - 1,
-                (af_u32)(r->length / AF_KIB), af_memory_type_name(r->type));
+                (unsigned long long)(r->length / AF_KIB),
+                af_memory_type_name(r->type));
     }
 
     if (bi->cmdline[0] != '\0') {
