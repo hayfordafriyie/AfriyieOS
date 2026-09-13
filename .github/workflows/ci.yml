@@ -1,0 +1,199 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  workflow_dispatch:
+
+# The kernel must build and boot on every push. `main` is always green and
+# always bootable — that is the rule that keeps the project trustworthy.
+
+env:
+  # Pinned so a toolchain bump is a deliberate change, not a surprise break.
+  BINUTILS_VERSION: "2.42"
+  GCC_VERSION: "14.2.0"
+  AF_PREFIX: ${{ github.workspace }}/opt/cross
+
+jobs:
+  # ===========================================================================
+  # T1 — host tests
+  #
+  # Pure Python logic: the FAT32 writer, the GPT builder, the image verifier
+  # and the header-consistency checks. No cross-compiler, no QEMU, no root, so
+  # this job is fast and always runs.
+  # ===========================================================================
+  host-tests:
+    name: Host tests (T1)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Byte-compile the tooling
+        run: python -m compileall -q tools
+
+      - name: Run host test suite
+        run: python -m unittest discover -s tests/host -v
+
+  # ===========================================================================
+  # Build and boot
+  #
+  # Builds the cross toolchain (cached — it takes 30+ minutes cold), builds the
+  # kernel and the UEFI boot bridge, packs a disk image, verifies the image
+  # structurally, then boots it in QEMU and asserts the kernel's boot markers.
+  # ===========================================================================
+  build-and-boot:
+    name: Build and boot (T2/T3)
+    runs-on: ubuntu-24.04
+    needs: host-tests
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential bison flex libgmp3-dev libmpc-dev libmpfr-dev \
+            texinfo nasm ninja-build cmake ovmf qemu-system-x86
+
+      # The toolchain cache is the difference between a 3-minute job and a
+      # 40-minute one. The key includes the pinned versions so a bump rebuilds.
+      - name: Cache the cross toolchain
+        id: toolchain-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.AF_PREFIX }}
+          key: cross-${{ runner.os }}-binutils${{ env.BINUTILS_VERSION }}-gcc${{ env.GCC_VERSION }}-v1
+
+      - name: Build the cross toolchain
+        if: steps.toolchain-cache.outputs.cache-hit != 'true'
+        run: |
+          chmod +x tools/build_toolchain.sh
+          ./tools/build_toolchain.sh x86_64-elf
+
+      - name: Verify the toolchain
+        run: |
+          export PATH="$AF_PREFIX/bin:$PATH"
+          x86_64-elf-gcc --version
+          nasm -v
+          cmake --version
+
+      - name: Configure
+        run: |
+          export PATH="$AF_PREFIX/bin:$PATH"
+          cmake -B build/x86_64 -G Ninja \
+                -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-x86_64-elf.cmake \
+                -DAF_TARGET=x86_64 \
+                -DCROSS_PREFIX="$AF_PREFIX"
+
+      - name: Build
+        run: cmake --build build/x86_64 -v
+
+      - name: Report kernel size against the 64 KiB budget
+        run: |
+          export PATH="$AF_PREFIX/bin:$PATH"
+          echo "### Kernel section sizes" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          x86_64-elf-size -A build/x86_64/kernel | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+          TEXT_SIZE=$(x86_64-elf-size -A build/x86_64/kernel \
+                      | awk '/^\.text/ {print $2}')
+          echo "kernel .text = ${TEXT_SIZE} bytes (budget 65536)"
+          if [ "${TEXT_SIZE:-0}" -gt 65536 ]; then
+            echo "::error::kernel .text exceeded the 64 KiB budget from "\
+                 "blueprint section 14"
+            exit 1
+          fi
+
+      - name: Package the disk image
+        run: |
+          python tools/mkimage.py --arch x86_64 \
+            --build-dir build/x86_64 \
+            --output build/x86_64/afriyieos.img
+
+      - name: Verify the disk image structure
+        run: |
+          python tools/verify_image.py \
+            --image build/x86_64/afriyieos.img \
+            --expect "EFI/BOOT/BOOTX64.EFI:build/x86_64/boot/BOOTX64.EFI"
+
+      - name: Boot in QEMU and assert the boot markers
+        run: |
+          python tools/run_qemu.py --arch x86_64 \
+            --image build/x86_64/afriyieos.img \
+            --test --timeout 90 \
+            --serial-log build/x86_64/serial.log
+
+      - name: Show the boot log
+        if: always()
+        run: |
+          echo "### Boot serial log" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          cat build/x86_64/serial.log >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || \
+            echo "(no serial log)" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload artefacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: afriyieos-x86_64
+          path: |
+            build/x86_64/kernel
+            build/x86_64/kernel.bin
+            build/x86_64/kernel.map
+            build/x86_64/boot/BOOTX64.EFI
+            build/x86_64/serial.log
+          if-no-files-found: warn
+
+  # ===========================================================================
+  # Lint
+  #
+  # Cheap checks that catch the boring mistakes: shell syntax, Python style,
+  # and accidentally committed build artefacts or secrets.
+  # ===========================================================================
+  lint:
+    name: Lint
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Shell script syntax
+        run: |
+          sudo apt-get update && sudo apt-get install -y shellcheck
+          shellcheck tools/*.sh
+
+      - name: Python syntax
+        run: python -m compileall -q tools tests
+
+      - name: No committed build artefacts
+        run: |
+          if git ls-files | grep -E '\.(o|a|elf|bin|img|iso|efi|pyc)$|__pycache__'; then
+            echo "::error::build artefacts are tracked in git"
+            exit 1
+          fi
+          echo "no build artefacts tracked"
+
+      - name: No embedded credentials
+        run: |
+          # The repository URL carries a PAT for local pushes; it must never be
+          # committed. Check for a token pattern in tracked text files.
+          if git grep -nI -E 'ghp_[A-Za-z0-9]{36}' -- . ':!*.md' ':!.github/*' ; then
+            echo "::error::a GitHub token appears to be committed"
+            exit 1
+          fi
+          echo "no credentials found in tracked files"

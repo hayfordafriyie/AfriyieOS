@@ -37,10 +37,15 @@ from typing import List, Optional
 # -----------------------------------------------------------------------------
 SECTOR_SIZE = 512
 
-# ESP geometry. 512-byte clusters on a 64 MiB volume yields ~131 000 clusters,
-# which matters: FAT32 is only valid above 65 525 clusters, and the obvious
-# choice of 4 KiB clusters on a volume this small silently produces an invalid
-# FAT32 file system that firmware refuses to mount.
+# ESP geometry.
+#
+# 512-byte clusters, not the 4 KiB a modern tool would pick by default. FAT32 is
+# only valid between 65 525 and 0x0FFFFFF5 clusters, so on a volume this small
+# the cluster size must be small to stay above the lower bound. The practical
+# consequence is a minimum ESP size: at one 512-byte sector per cluster a volume
+# needs roughly 33.5 MiB before it has 65 525 usable clusters, so a 32 MiB ESP
+# cannot be FAT32 at all. Fat32Volume raises rather than producing a file system
+# firmware would silently refuse to mount.
 ESP_SIZE_BYTES = 64 * 1024 * 1024
 ESP_SECTORS_PER_CLUSTER = 1
 ESP_RESERVED_SECTORS = 32
@@ -409,30 +414,42 @@ class Fat32Volume:
 
         count = len(raw_entry) // 32
 
-        # Walk the directory chain collecting free slots in order. A 0x00 marker
-        # terminates the directory: that slot and every slot after it in the same
-        # cluster is free (clusters are always zero-filled when allocated), so
-        # they are all usable. Extend the chain when more room is needed.
-        slots = []
+        # Collect free slots in order. There are two sources of free space:
+        #   * 0xE5 entries (deleted) anywhere in the directory;
+        #   * the 0x00 terminator and every slot after it.
+        # When more room is needed the cluster chain is extended, and a freshly
+        # allocated cluster is entirely free because clusters are zero-filled.
+        #
+        # The subtle requirement is that this keeps extending until there are
+        # ENOUGH slots, not merely until the terminator is found. A three-entry
+        # long-name chain landing in the last free slot of a directory needs two
+        # more slots; stopping at the terminator silently loses the file.
+        slots: List[tuple] = []
         cluster = dir_cluster
-        found_terminator = False
+        directory_ended = False
 
-        while not found_terminator:
+        while len(slots) < count:
             raw = self._read_cluster(cluster)
-            terminator_offset = None
 
-            for offset in range(0, len(raw), 32):
-                marker = raw[offset]
-                if marker == 0x00:
-                    terminator_offset = offset
-                    break
-                if marker == 0xE5:
+            if directory_ended:
+                for offset in range(0, len(raw), 32):
                     slots.append((cluster, offset))
+            else:
+                for offset in range(0, len(raw), 32):
+                    marker = raw[offset]
+                    if marker == 0x00:
+                        # This slot ends the directory, so it and every slot
+                        # after it in this cluster are free.
+                        directory_ended = True
+                        for free_offset in range(offset, len(raw), 32):
+                            slots.append((cluster, free_offset))
+                        break
+                    if marker == 0xE5:
+                        slots.append((cluster, offset))
+                    if len(slots) >= count:
+                        break
 
-            if terminator_offset is not None:
-                for offset in range(terminator_offset, len(raw), 32):
-                    slots.append((cluster, offset))
-                found_terminator = True
+            if len(slots) >= count:
                 break
 
             next_cluster = self.fat[cluster]
@@ -441,14 +458,9 @@ class Fat32Volume:
                 self._set_fat(cluster, new_cluster)
                 self._set_fat(new_cluster, 0x0FFFFFFF)
                 cluster = new_cluster
+                directory_ended = True   # a fresh cluster is all zeros
             else:
                 cluster = next_cluster
-
-        if len(slots) < count:
-            raise Fat32Error(
-                f"directory has {len(slots)} free slots but {count} entries "
-                f"must be written"
-            )
 
         for index in range(count):
             target_cluster, offset = slots[index]
