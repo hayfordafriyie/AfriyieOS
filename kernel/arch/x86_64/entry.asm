@@ -13,9 +13,28 @@
 ;   3. zero .bss, because firmware leaves it full of garbage
 ;   4. call kmain — which never returns
 
+; =============================================================================
+; THE ENTRY STUB MUST BE THE FIRST BYTES OF THE KERNEL IMAGE
+; =============================================================================
+; The boot bridge copies the flat kernel binary to physical 0x100000 and jumps
+; there — it does not read the ELF entry point. So kernel_entry has to sit at
+; offset 0 of the image, which is what the dedicated .text.boot section is for:
+; kernel/linker/x86_64.lds places it first, before any other .text.
+;
+; This shipped broken once. With the stub in plain `section .text`, the linker
+; interleaved it with the C functions and put it at 0x107900 while the bridge
+; jumped to 0x100000 — so the CPU started executing whatever C function happened
+; to land first, with no stack and no arguments. The machine hung with no output
+; at all, on the far side of ExitBootServices where nothing can report it.
+;
+; tools/link_check.sh and tools/build.sh both assert that kernel_entry is at the
+; kernel link base. If a future change moves it, the build fails loudly instead
+; of producing an image that silently cannot boot.
+; =============================================================================
+
 [bits 64]
 
-section .text
+section .text.boot
 global kernel_entry
 extern kmain
 

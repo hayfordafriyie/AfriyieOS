@@ -125,8 +125,25 @@ class Fat32Volume:
 
         # FAT as a list of 32-bit entries, mirrored to disk on write.
         self.fat: List[int] = [0] * self.fat_entries
-        self.fat[0] = 0x0FFFFFF8   # media descriptor
-        self.fat[1] = 0x0FFFFFFF   # end of chain
+        self.fat[0] = 0x0FFFFFF8   # media descriptor: 0xF8 plus all high bits set
+        self.fat[1] = 0x0FFFFFFF   # reserved: end of chain
+
+        # THE ROOT DIRECTORY MUST BE MARKED ALLOCATED.
+        #
+        # Cluster 2 is the root directory, and the allocator starts handing out
+        # clusters from 3 onward — so nothing else ever sets FAT[2]. Left at
+        # zero it reads as "free cluster", and a real FAT driver then sees the
+        # root directory chain as unallocated:
+        #
+        #     mtools:       "Fat problem while decoding 2 0"
+        #     Linux vfat:   "can't read superblock"
+        #
+        # Our own verifier did not catch this because it trusts the same bitmap
+        # the writer maintains. It took reading the image with mtools and with
+        # the kernel's own FAT driver to see it — which is the argument for
+        # cross-checking a format against an independent implementation rather
+        # than only against yourself.
+        self.fat[self.root_cluster] = 0x0FFFFFFF   # end of chain: root is 1 cluster
         self.next_free_cluster = 3
 
         self._format_boot_sector()

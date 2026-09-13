@@ -48,6 +48,11 @@ set(AF_KERNEL_C_FLAGS ${AF_COMMON_FLAGS}
                             # no floating point in the kernel, ever
     -fno-asynchronous-unwind-tables
     -fno-unwind-tables
+    # Mark the stack non-executable in every object. Without this, objects that
+    # carry no .note.GNU-stack section make the linker warn that it is
+    # "assuming an executable stack" — and an executable stack is a real
+    # hardening loss, not a cosmetic warning.
+    -Wa,--noexecstack
 )
 
 if(AF_KERNEL_HIGHER_HALF)
@@ -124,9 +129,21 @@ endif()
 
 # -----------------------------------------------------------------------------
 # Interface libraries — link these instead of repeating flags
+#
+# The compile OPTIONS are wrapped in a $<COMPILE_LANGUAGE:C> generator
+# expression. Without it CMake hands the same flags to every compiler in the
+# target, including NASM, which then fails with
+#
+#     nasm: fatal: unrecognised output format `freestanding'
+#
+# NASM has its own option syntax and needs none of these GCC flags: it gets the
+# object format from CMAKE_ASM_NASM_OBJECT_FORMAT (-f elf64), and -I/-D from
+# target_include_directories/target_compile_definitions below are already valid
+# NASM option spellings.
 # -----------------------------------------------------------------------------
 add_library(af_kernel_flags INTERFACE)
-target_compile_options(af_kernel_flags INTERFACE ${AF_KERNEL_C_FLAGS})
+target_compile_options(af_kernel_flags INTERFACE
+    $<$<COMPILE_LANGUAGE:C>:${AF_KERNEL_C_FLAGS}>)
 target_include_directories(af_kernel_flags INTERFACE
     "${CMAKE_SOURCE_DIR}/kernel/include")
 target_compile_definitions(af_kernel_flags INTERFACE
@@ -134,7 +151,8 @@ target_compile_definitions(af_kernel_flags INTERFACE
     AF_TARGET_AARCH64=$<STREQUAL:${AF_TARGET},aarch64>)
 
 add_library(af_boot_flags INTERFACE)
-target_compile_options(af_boot_flags INTERFACE ${AF_BOOT_FLAGS})
+target_compile_options(af_boot_flags INTERFACE
+    $<$<COMPILE_LANGUAGE:C>:${AF_BOOT_FLAGS}>)
 
 add_library(af_user_flags INTERFACE)
 target_compile_options(af_user_flags INTERFACE

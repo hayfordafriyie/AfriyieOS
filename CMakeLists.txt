@@ -99,7 +99,7 @@ add_custom_target(image
             --arch ${AF_TARGET}
             --build-dir "${CMAKE_BINARY_DIR}"
             --output "${AF_IMAGE_PATH}"
-    DEPENDS afriyieos_kernel
+    DEPENDS afriyieos_kernel afriyieos_boot
     COMMENT "Packaging bootable AfriyieOS disk image for ${AF_TARGET}"
     VERBATIM)
 

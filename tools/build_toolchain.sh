@@ -66,6 +66,14 @@ Install them first:
         warn "nasm not found — required to build the x86_64 kernel (apt install nasm)"
     fi
 
+    # The UEFI boot bridge is PE32+ and the *-elf toolchain built here has no PE
+    # emulation, so it needs the packaged MinGW PE compiler. Reported here rather
+    # than at link time so the requirement is visible before a 30-minute wait.
+    if ! command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then
+        warn "x86_64-w64-mingw32-gcc not found — required for the UEFI boot bridge"
+        warn "  apt install gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64"
+    fi
+
     ok "prerequisites present"
     mkdir -p "$AF_PREFIX" "$AF_SRC"
 }

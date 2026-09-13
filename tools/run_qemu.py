@@ -223,8 +223,18 @@ def run_test(args, cmd: List[str]) -> int:
                 break
 
             if os.path.exists(serial_log):
-                with open(serial_log, "r", errors="replace") as handle:
-                    output = handle.read()
+                # Reading a file that another process is still writing can fail
+                # transiently. On a 9p/drvfs mount (WSL reading a Windows drive)
+                # it raises ENODATA — "No data available" — for a log that simply
+                # has not been flushed yet. That is not an error worth aborting a
+                # boot test over, so transient failures are ignored and the next
+                # poll retries.
+                try:
+                    with open(serial_log, "r", errors="replace") as handle:
+                        output = handle.read()
+                except OSError:
+                    time.sleep(0.25)
+                    continue
 
                 if any(marker in output for marker in FATAL_MARKERS):
                     failure_reason = "kernel reported a fatal marker"

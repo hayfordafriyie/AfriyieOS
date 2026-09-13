@@ -181,6 +181,23 @@ fi
 echo
 echo "=== linker script checks ==="
 
+# THE ENTRY POINT MUST BE AT THE KERNEL LINK BASE.
+#
+# The boot bridge copies the flat kernel binary to 0x100000 and jumps there
+# without reading the ELF header. If kernel_entry is anywhere else, the CPU
+# begins executing whatever code happens to sit at 0x100000 — with no stack and
+# no arguments — and the machine hangs after ExitBootServices, where nothing can
+# report the failure. This check has already caught that exact bug once.
+ENTRY_ADDR=$("$NM" "$OUT_DIR/kernel.elf" | awk '$3 == "kernel_entry" {print $1}')
+if [ "$ENTRY_ADDR" = "0000000000100000" ]; then
+    echo "  kernel_entry is at 0x100000  OK (matches KERNEL_PHYS_BASE)"
+else
+    echo "  FAIL: kernel_entry is at 0x${ENTRY_ADDR#0000000000}, expected 0x100000"
+    echo "        Put the entry stub in a dedicated .text.boot section that the"
+    echo "        linker script places first; see kernel/arch/x86_64/entry.asm."
+    fail=1
+fi
+
 # .bss must come after .data, and __bss_start/__bss_end must bracket it.
 BSS_START=$("$NM" "$OUT_DIR/kernel.elf" | awk '$3 == "__bss_start" {print $1}')
 BSS_SYMS=$("$NM" "$OUT_DIR/kernel.elf" | awk '$3 == "__bss_end" {print $1}')

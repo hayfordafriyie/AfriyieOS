@@ -6,8 +6,8 @@ on:
   pull_request:
   workflow_dispatch:
 
-# The kernel must build and boot on every push. `main` is always green and
-# always bootable — that is the rule that keeps the project trustworthy.
+# `main` is always green and always bootable — that is the rule that keeps the
+# project trustworthy, and this workflow is how it is enforced.
 
 env:
   # Pinned so a toolchain bump is a deliberate change, not a surprise break.
@@ -17,14 +17,16 @@ env:
 
 jobs:
   # ===========================================================================
-  # T1 — host tests
+  # T1 — host tests, compile check and link check
   #
-  # Pure Python logic: the FAT32 writer, the GPT builder, the image verifier
-  # and the header-consistency checks. No cross-compiler, no QEMU, no root, so
-  # this job is fast and always runs.
+  # Everything here runs with the stock gcc, nasm and binutils in about a
+  # minute, with NO cross-compiler. That is deliberate: it is the fastest useful
+  # feedback in the project, and it catches type errors, warnings, static assert
+  # failures, assembly syntax errors, linker script problems and layout
+  # mismatches — which is the overwhelming majority of build breakage.
   # ===========================================================================
   host-tests:
-    name: Host tests (T1)
+    name: Host tests, compile and link check (T1)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -33,18 +35,43 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Byte-compile the tooling
-        run: python -m compileall -q tools
+      - name: Install host tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential nasm binutils file
 
-      - name: Run host test suite
+      - name: Environment report
+        run: bash tools/check_env.sh || true
+
+      - name: Byte-compile the tooling
+        run: python -m compileall -q tools tests
+
+      - name: Host test suite (image toolchain)
         run: python -m unittest discover -s tests/host -v
+
+      - name: Compile check — every C and assembly file
+        run: bash tools/compile_check.sh
+
+      - name: Link check — linker script, symbols and layout
+        run: bash tools/link_check.sh
+
+      - name: Upload the link-check kernel
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linkcheck-kernel
+          path: |
+            build/linkcheck/kernel.elf
+            build/linkcheck/kernel.map
+          if-no-files-found: warn
 
   # ===========================================================================
   # Build and boot
   #
-  # Builds the cross toolchain (cached — it takes 30+ minutes cold), builds the
-  # kernel and the UEFI boot bridge, packs a disk image, verifies the image
-  # structurally, then boots it in QEMU and asserts the kernel's boot markers.
+  # The real thing: the cross toolchain (cached), the kernel, the UEFI
+  # application, the disk image, and a boot in QEMU that asserts the kernel's
+  # markers.
   # ===========================================================================
   build-and-boot:
     name: Build and boot (T2/T3)
@@ -63,7 +90,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential bison flex libgmp3-dev libmpc-dev libmpfr-dev \
-            texinfo nasm ninja-build cmake ovmf qemu-system-x86
+            texinfo nasm ninja-build cmake ovmf qemu-system-x86 file \
+            gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64
 
       # The toolchain cache is the difference between a 3-minute job and a
       # 40-minute one. The key includes the pinned versions so a bump rebuilds.
@@ -77,15 +105,16 @@ jobs:
       - name: Build the cross toolchain
         if: steps.toolchain-cache.outputs.cache-hit != 'true'
         run: |
-          chmod +x tools/build_toolchain.sh
+          chmod +x tools/*.sh
           ./tools/build_toolchain.sh x86_64-elf
 
-      - name: Verify the toolchain
+      - name: Verify the toolchains
         run: |
           export PATH="$AF_PREFIX/bin:$PATH"
-          x86_64-elf-gcc --version
+          x86_64-elf-gcc --version | head -1
+          x86_64-w64-mingw32-gcc --version | head -1
           nasm -v
-          cmake --version
+          cmake --version | head -1
 
       - name: Configure
         run: |
@@ -98,20 +127,30 @@ jobs:
       - name: Build
         run: cmake --build build/x86_64 -v
 
+      - name: Verify the boot bridge is a UEFI application
+        run: |
+          EFI=build/x86_64/boot/BOOTX64.EFI
+          file "$EFI"
+          file "$EFI" | grep -q "EFI (application)" \
+            || { echo "::error::BOOTX64.EFI is not an EFI application"; exit 1; }
+          objdump -h "$EFI" | tail -1 | grep -q '\.reloc' \
+            || { echo "::error::.reloc is not the last PE section"; exit 1; }
+          echo "boot bridge: $(stat -c%s "$EFI") bytes, valid PE32+ EFI application"
+
       - name: Report kernel size against the 64 KiB budget
         run: |
           export PATH="$AF_PREFIX/bin:$PATH"
-          echo "### Kernel section sizes" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          x86_64-elf-size -A build/x86_64/kernel | tee -a "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "### Kernel section sizes"
+            echo '```'
+            x86_64-elf-size -A build/x86_64/kernel
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
-          TEXT_SIZE=$(x86_64-elf-size -A build/x86_64/kernel \
-                      | awk '/^\.text/ {print $2}')
+          TEXT_SIZE=$(x86_64-elf-size -A build/x86_64/kernel | awk '/^\.text/ {print $2}')
           echo "kernel .text = ${TEXT_SIZE} bytes (budget 65536)"
           if [ "${TEXT_SIZE:-0}" -gt 65536 ]; then
-            echo "::error::kernel .text exceeded the 64 KiB budget from "\
-                 "blueprint section 14"
+            echo "::error::kernel .text exceeded the 64 KiB budget from blueprint section 14"
             exit 1
           fi
 
@@ -137,11 +176,12 @@ jobs:
       - name: Show the boot log
         if: always()
         run: |
-          echo "### Boot serial log" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          cat build/x86_64/serial.log >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || \
-            echo "(no serial log)" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "### Boot serial log"
+            echo '```'
+            cat build/x86_64/serial.log 2>/dev/null || echo "(no serial log)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload artefacts
         if: always()
@@ -153,14 +193,12 @@ jobs:
             build/x86_64/kernel.bin
             build/x86_64/kernel.map
             build/x86_64/boot/BOOTX64.EFI
+            build/x86_64/afriyieos.img
             build/x86_64/serial.log
           if-no-files-found: warn
 
   # ===========================================================================
   # Lint
-  #
-  # Cheap checks that catch the boring mistakes: shell syntax, Python style,
-  # and accidentally committed build artefacts or secrets.
   # ===========================================================================
   lint:
     name: Lint

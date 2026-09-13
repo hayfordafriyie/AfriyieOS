@@ -20,8 +20,13 @@
 ;
 ; AF_KERNEL_BIN is substituted by CMake from embed.asm.in.
 
+; AF_KERNEL_BIN is substituted by CMake's configure_file (@AF_KERNEL_BIN@).
+; Without the @...@ placeholder CMake has nothing to replace and the literal
+; fallback below is used, which is how this file first shipped — and the
+; resulting error, "incbin: unable to get length of file `kernel.bin'", points
+; at NASM rather than at the template that was never substituted.
 %ifndef AF_KERNEL_BIN
-%define AF_KERNEL_BIN "kernel.bin"
+%define AF_KERNEL_BIN "@AF_KERNEL_BIN@"
 %endif
 
 [bits 64]
@@ -36,4 +41,9 @@ af_kernel_image_start:
     incbin AF_KERNEL_BIN
 af_kernel_image_end:
 
+; The GNU-stack note is an ELF concept. This file is assembled for the UEFI
+; target, so the object is PE/COFF — emitting an ELF note section there would
+; create a bogus section that only the linker script's /DISCARD/ would remove.
+%ifidn __OUTPUT_FORMAT__, elf64
 section .note.GNU-stack noalloc noexec nowrite progbits
+%endif

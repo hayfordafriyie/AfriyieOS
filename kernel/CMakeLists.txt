@@ -63,6 +63,12 @@ add_executable(afriyieos_kernel
 
 set_target_properties(afriyieos_kernel PROPERTIES
     OUTPUT_NAME "kernel"
+    # Emit to the build root, not into kernel/ next to the object files. The
+    # default puts the binary at build/<arch>/kernel/kernel — a file with the
+    # same name as the directory holding it, which is genuinely confusing to
+    # read in a log and easy to get wrong in a script.
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
+    SUFFIX ".elf"
     LINK_DEPENDS "${AF_LINKER_SCRIPT}"
     C_STANDARD 11
     C_STANDARD_REQUIRED ON
@@ -87,7 +93,6 @@ add_custom_command(TARGET afriyieos_kernel POST_BUILD
             ${CMAKE_BINARY_DIR}/kernel.bin
     COMMENT "Producing flat kernel binary"
     VERBATIM)
-
 # -----------------------------------------------------------------------------
 # Size budget (blueprint section 14): .text must stay under 64 KiB.
 # This is a warning at v0.1, before the check is promoted to a CI failure.

@@ -42,6 +42,13 @@ check "x86_64-elf-gcc"  x86_64-elf-gcc  "run tools/build_toolchain.sh"
 check "aarch64-elf-gcc" aarch64-elf-gcc "run tools/build_toolchain.sh (v1.1)"
 echo
 
+echo "=== UEFI boot bridge toolchain ==="
+# The boot bridge is a PE32+ executable and the x86_64-elf toolchain has no PE
+# emulation, so it is built with the packaged MinGW PE compiler instead.
+check "x86_64-w64-mingw32-gcc" x86_64-w64-mingw32-gcc \
+      "apt install gcc-mingw-w64-x86-64"
+echo
+
 echo "=== emulation ==="
 check "qemu-system-x86_64" qemu-system-x86_64 "boot tests"
 check "qemu-system-aarch64" qemu-system-aarch64 "v1.1 boot tests"
@@ -66,5 +73,6 @@ echo
 echo "  Install on Ubuntu/Debian:"
 echo "    sudo apt install build-essential bison flex libgmp3-dev libmpc-dev \\"
 echo "                     libmpfr-dev texinfo nasm cmake ninja-build \\"
-echo "                     qemu-system-x86 qemu-system-arm qemu-utils ovmf"
+echo "                     qemu-system-x86 qemu-system-arm qemu-utils ovmf \\"
+echo "                     gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64"
 exit 1
