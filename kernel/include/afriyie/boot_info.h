@@ -100,7 +100,9 @@ typedef struct {
     af_u32              _reserved;
 } AF_PACKED af_boot_framebuffer_t;
 
-AF_STATIC_ASSERT_SIZE(af_boot_framebuffer_t, 72);
+// 8 (address) + 8 (size) + 3x4 (geometry) + 7x2 (bpp, masks, pad) + 4 (format)
+// + 4 (_reserved) = 52 bytes, with no padding because the struct is packed.
+AF_STATIC_ASSERT_SIZE(af_boot_framebuffer_t, 52);
 
 // -----------------------------------------------------------------------------
 // Console / debug output

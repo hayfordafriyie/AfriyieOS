@@ -44,6 +44,11 @@ void af_log_set_sink(af_log_sink_fn sink, void *ctx);
 void       af_log_set_level(af_log_level_t level);
 af_log_level_t af_log_get_level(void);
 
+// Registers the clock used to stamp log lines. kmain() calls this once the
+// timer is running; before that, timestamps are zero, which is exactly what
+// early boot should look like. Returns nanoseconds since boot.
+void af_log_register_time_source(af_u64 (*fn)(void));
+
 // Raw write — used by the panic handler and the boot bridge before the
 // formatting layer is ready.
 void af_log_raw(const char *text);
