@@ -10,13 +10,23 @@
 #   ./tools/verify_all.sh              # everything, including a QEMU boot
 #   ./tools/verify_all.sh --no-boot    # skip the emulator checks (fast)
 #
-# shellcheck disable=SC2329
+# shellcheck disable=SC2317,SC2329
 # The step functions below are invoked BY NAME through `step`, so shellcheck
-# cannot see a call site and reports every one of them as never invoked. The
+# cannot see a call site and reports every one as unreachable/never invoked. The
 # directive has to sit here rather than beside them: a `disable` applies to the
 # next command only, and placing it before the block covered exactly one of the
-# six. The check that matters for a dispatcher is running it, which
-# tools/verify_all.sh is in the habit of doing several times a day.
+# eight.
+#
+# TWO CODES FOR ONE FINDING, because the two shellcheck versions in play number
+# it differently: 0.11.0 (a current local install) says SC2329, 0.9.0 (what
+# `apt-get install shellcheck` gives on ubuntu-24.04, which is what CI uses) says
+# SC2317. Disabling only SC2329 left CI red with the identical complaint.
+#
+# This is a real trade: SC2317 also covers genuinely dead code, and this disables
+# it for the whole file. It is accepted because the script is a dispatcher whose
+# entire purpose is indirect invocation — but if SC2317 ever fires here on
+# something that is NOT one of the s_* functions, do not extend the directive;
+# delete the dead code it found.
 #
 set -uo pipefail
 

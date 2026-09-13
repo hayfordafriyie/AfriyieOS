@@ -110,7 +110,11 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.AF_CROSS_PREFIX }}
-          key: cross-${{ runner.os }}-binutils${{ env.BINUTILS_VERSION }}-gcc${{ env.GCC_VERSION }}-v1
+          # v2: v1 was saved from the wrong directory (see AF_CROSS_PREFIX above), so a
+          # v1 hit would restore something that is not a toolchain and skip the
+          # build. Bump this whenever the cache path or the layout changes —
+          # changing the path alone leaves the stale entry to be restored.
+          key: cross-${{ runner.os }}-binutils${{ env.BINUTILS_VERSION }}-gcc${{ env.GCC_VERSION }}-v2
 
       - name: Build the cross toolchain
         if: steps.toolchain-cache.outputs.cache-hit != 'true'
@@ -143,8 +147,18 @@ jobs:
           file "$EFI"
           file "$EFI" | grep -q "EFI (application)" \
             || { echo "::error::BOOTX64.EFI is not an EFI application"; exit 1; }
-          objdump -h "$EFI" | tail -1 | grep -q '\.reloc' \
-            || { echo "::error::.reloc is not the last PE section"; exit 1; }
+          # `objdump -h` prints a section as TWO lines when its flag list is
+          # long: the name line, then a continuation line. `tail -1` therefore
+          # returns a flags line, not a section name, and the grep could never
+          # match — this step was written against the single-line case and would
+          # have failed on every run. It had never run, so nobody knew.
+          #
+          # Match the name column at the start of a numbered line instead, and
+          # check the LAST such line, which is what "last section" means.
+          RELOC_LINE=$(objdump -h "$EFI" | grep -E '^ *[0-9]+ \.' | tail -n 1)
+          echo "last PE section: $RELOC_LINE"
+          echo "$RELOC_LINE" | grep -q '\.reloc' \
+            || { echo "::error::.reloc is not the last PE section — UEFI firmware needs it there"; exit 1; }
           echo "boot bridge: $(stat -c%s "$EFI") bytes, valid PE32+ EFI application"
 
       - name: Report kernel size against the .text budget
@@ -241,6 +255,18 @@ jobs:
       - name: Shell script syntax
         run: |
           sudo apt-get update && sudo apt-get install -y shellcheck
+
+          # The distro package is 0.9.0 on ubuntu-24.04 and a current local
+          # install is 0.11.0, and the two number some findings differently:
+          # SC2317 versus SC2329 for the same indirect-call false positive, which
+          # turned a green local run into a red CI one.
+          #
+          # The versions are not pinned to match, because the fix for that is a
+          # directive covering both codes — tools/verify_all.sh has one, with the
+          # reasoning written next to it. What this step adds is the version in
+          # the log, so a future divergence is one line away from being obvious
+          # instead of a puzzle.
+          shellcheck --version | head -n 3
           shellcheck tools/*.sh
 
       - name: Python syntax

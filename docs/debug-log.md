@@ -75,7 +75,26 @@ Build and boot (T2/T3): skipped
    then `PATH` pointed at a directory that was still empty, so the step that
    checked the compiler failed to find the compiler it had just built.
 
-**Fix:** all five.
+6. **The `.reloc` check read the wrong line.**
+
+   ```
+   objdump -h "$EFI" | tail -1 | grep -q '\.reloc'
+   ```
+
+   `objdump -h` prints a section as *two* lines when its flag list is long — the
+   name/size/offset line, then a continuation line with the flags in it. So
+   `tail -1` returns a flags line, never a section name, and the grep could not
+   match whichever section happened to be last. The step would have failed on
+   every run since it was written, and it never ran, so nobody knew.
+
+7. **The toolchain cache key was stale.** The cache path was
+   `$GITHUB_WORKSPACE/opt/cross` while the toolchain installed into
+   `$HOME/opt/cross`, so whatever the cache stored was not a toolchain. Once both
+   agree on `AF_CROSS_PREFIX`, the old entry under the same key would be restored,
+   the build skipped on a reported cache hit, and the next step would fail looking
+   for a compiler nothing had unpacked. Bumped to `-v2`.
+
+**Fix:** all seven.
 
 * `mkimage.py` names the bytes once and uses the name in the f-string.
 * `tools/pycompat.py` — a new check that makes this class of failure visible
