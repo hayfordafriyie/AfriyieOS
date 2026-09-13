@@ -258,30 +258,22 @@ af_status_t afpkg_ar_find_control(const af_u8 *data, af_size len,
         }
 
         if (starts_with(member, "control.tar")) {
-            // AN UNSUPPORTED COMPRESSION IS REFUSED BY NAME, never guessed at.
+            // ANY control.tar* MEMBER IS RETURNED, AND THE CALLER DECIDES HOW TO
+            // READ IT — from the BYTES, not from this name.
             //
-            // Treating an xz member as if it were gzip produces garbage that
-            // parses as a control file with a wrong name, and the package then
-            // installs under that name. An error is strictly better than a
-            // plausible wrong answer.
-            const char *suffix = member + 11;   // past "control.tar"
-
-            if (suffix[0] == '\0') {
-                *out = data + payload;
-                *out_len = (af_size)size;
-                *why = "found uncompressed control.tar";
-                return AF_OK;
-            }
-            if (afpkg_strcmp(suffix, ".gz") == 0) {
-                *out = data + payload;
-                *out_len = (af_size)size;
-                *why = "found control.tar.gz";
-                return AF_OK;
-            }
-
-            *why = "control member uses a compression this build does not "
-                   "support (only control.tar and control.tar.gz are handled)";
-            return AF_ERR_NOTSUP;
+            // This used to refuse anything but .gz by name. That is the right
+            // instinct applied one layer too early: the name is a claim and the
+            // magic is evidence (ADR-013), and a reader that trusts the name
+            // refuses members it can actually decompress while accepting members
+            // whose name disagrees with their contents. A .deb whose control
+            // archive is named .tar.gz but is really uncompressed is legal and
+            // dpkg accepts it; so is the reverse.
+            //
+            // The one thing the name still decides is WHICH member this is.
+            *out = data + payload;
+            *out_len = (af_size)size;
+            *why = "found the control member";
+            return AF_OK;
         }
 
         af_size advance = (af_size)size;
@@ -1030,6 +1022,13 @@ static af_status_t read_apk(const af_u8 *data, af_size len,
 // =============================================================================
 // Reading a package
 // =============================================================================
+// Defined below, next to the note that explains it; declared here because the
+// .deb reader is the only caller and reads better without it in the middle.
+static af_status_t afpkg_member_decompress(const af_u8 *member, af_size member_len,
+                                           const afpkg_scratch_t *scratch,
+                                           const af_u8 **out, af_size *out_len,
+                                           const char **why);
+
 static af_status_t read_deb(const af_u8 *data, af_size len,
                             const afpkg_scratch_t *scratch, af_pkg_t *out)
 {
@@ -1070,20 +1069,16 @@ static af_status_t read_deb(const af_u8 *data, af_size len,
     const af_u8 *control_tar = control;
     af_size control_tar_len = control_len;
 
-    // gzip when the member says .gz. The uncompressed case is legal and dpkg
-    // accepts it, which is why both are handled rather than assuming.
-    if (control_len >= 2 && control[0] == 0x1F && control[1] == 0x8B) {
-        if (scratch == NULL) {
-            out->error = "a compressed control member needs a scratch buffer";
-            return AF_ERR_INVAL;
-        }
-
-        rc = afpkg_gunzip(control, control_len, *scratch, &control_tar_len, &why);
-        if (af_status_err(rc)) {
-            out->error = why;
-            return rc;
-        }
-        control_tar = scratch->base;
+    // The compression is determined by the member's MAGIC, not by the suffix in
+    // its name. dpkg respects the name and so does this reader for the case that
+    // matters — a member that is not actually compressed is passed through
+    // unchanged — but a member whose name disagrees with its contents is read
+    // correctly rather than as garbage.
+    rc = afpkg_member_decompress(control, control_len, scratch,
+                                 &control_tar, &control_tar_len, &why);
+    if (af_status_err(rc)) {
+        out->error = why;
+        return rc;
     }
 
     // --- find ./control inside it ---------------------------------------------
@@ -1129,41 +1124,121 @@ static af_status_t read_deb(const af_u8 *data, af_size len,
     }
 
     // --- the data member, decompressed for the caller -------------------------
+    //
+    // The name is tried in the order dpkg has used over the years, and the
+    // COMPRESSION is then decided by the bytes. A modern .deb is
+    // data.tar.zst or data.tar.xz — the containers changed underneath the
+    // documentation, and a reader that only knows .gz silently reads the wrong
+    // member or none at all.
     const af_u8 *data_member = NULL;
     af_size data_member_len = 0;
 
-    rc = afpkg_ar_find(data, len, "data.tar.gz", &data_member,
-                       &data_member_len, &why);
-    if (af_status_err(rc)) {
-        rc = afpkg_ar_find(data, len, "data.tar", &data_member,
+    static const char *const data_names[] = {
+        "data.tar.gz", "data.tar.zst", "data.tar.xz", "data.tar"
+    };
+
+    rc = AF_ERR_NOENT;
+    for (unsigned i = 0; i < sizeof(data_names) / sizeof(data_names[0]); i++) {
+        rc = afpkg_ar_find(data, len, data_names[i], &data_member,
                            &data_member_len, &why);
-        if (af_status_err(rc)) {
-            out->error = why;
-            return rc;
+        if (!af_status_err(rc)) {
+            break;
         }
     }
+    if (af_status_err(rc)) {
+        out->error = "the package has no data.tar member — it describes itself "
+                     "and installs nothing";
+        return rc;
+    }
 
-    if (data_member_len >= 2 && data_member[0] == 0x1F && data_member[1] == 0x8B) {
-        if (scratch == NULL) {
-            out->error = "a compressed data member needs a scratch buffer";
-            return AF_ERR_INVAL;
-        }
-
-        af_size inflated = 0;
-        rc = afpkg_gunzip(data_member, data_member_len, *scratch, &inflated, &why);
-        if (af_status_err(rc)) {
-            out->error = why;
-            return rc;
-        }
-        out->data_tar     = scratch->base;
-        out->data_tar_len = inflated;
-    } else {
-        out->data_tar     = data_member;
-        out->data_tar_len = data_member_len;
+    rc = afpkg_member_decompress(data_member, data_member_len, scratch,
+                                 &out->data_tar, &out->data_tar_len, &why);
+    if (af_status_err(rc)) {
+        out->error = why;
+        return rc;
     }
 
     out->format = AF_BINFMT_DEB;
     out->error  = "read as a Debian package";
+    return AF_OK;
+}
+
+// =============================================================================
+// One member of a package, decompressed according to what it IS
+//
+// ADR-013 in one function: walk inward to an actionable answer, and never decide
+// by extension. A .deb's control and data members may be tar, tar.gz, tar.xz or
+// tar.zst, and which one is a fact about the bytes. The name is a claim the file
+// makes about itself.
+//
+// A member that carries none of the known magics is passed through unchanged
+// rather than refused, because the uncompressed case is legal and dpkg writes it.
+// The caller's tar parser is then the thing that reports a member which is
+// neither compressed nor a tar — and it reports it with a tar error, which is
+// the truth about that member.
+// =============================================================================
+static af_status_t afpkg_member_decompress(const af_u8 *member, af_size member_len,
+                                           const afpkg_scratch_t *scratch,
+                                           const af_u8 **out, af_size *out_len,
+                                           const char **why)
+{
+    *out = member;
+    *out_len = member_len;
+
+    const bool is_gzip = member_len >= 2 && member[0] == 0x1F && member[1] == 0x8B;
+    const bool is_zstd = member_len >= 4 && member[0] == 0x28 && member[1] == 0xB5 &&
+                         member[2] == 0x2F && member[3] == 0xFD;
+    const bool is_xz = member_len >= 6 && member[0] == 0xFD && member[1] == '7' &&
+                       member[2] == 'z' && member[3] == 'X' && member[4] == 'Z' &&
+                       member[5] == 0x00;
+    const bool is_bzip2 = member_len >= 3 && member[0] == 'B' && member[1] == 'Z' &&
+                          member[2] == 'h';
+
+    // bzip2 IS DETECTED AND REFUSED BY NAME rather than passed through. The
+    // difference is the error message: passed through, the tar parser reports a
+    // bad tar header at offset 0 and the user goes looking for corruption in a
+    // file that is intact and simply uses a format this build does not
+    // implement. Naming the compression is one line and saves that entirely.
+    if (is_bzip2) {
+        *why = "the package member is bzip2-compressed, which this build does "
+               "not decode";
+        return AF_ERR_NOTSUP;
+    }
+
+    if (!is_gzip && !is_zstd && !is_xz) {
+        *why = "member is not compressed";
+        return AF_OK;
+    }
+
+    if (scratch == NULL) {
+        *why = "a compressed package member needs a scratch buffer";
+        return AF_ERR_INVAL;
+    }
+
+    af_size produced = 0;
+
+    if (is_gzip) {
+        const af_status_t rc = afpkg_gunzip(member, member_len, *scratch,
+                                            &produced, why);
+        if (af_status_err(rc)) {
+            return rc;
+        }
+    } else if (is_zstd) {
+        const af_status_t rc = afpkg_zstd(member, member_len, scratch->base,
+                                          scratch->size, &produced, why);
+        if (af_status_err(rc)) {
+            return rc;
+        }
+    } else {
+        const af_status_t rc = afpkg_xz(member, member_len, scratch->base,
+                                        scratch->size, &produced, why);
+        if (af_status_err(rc)) {
+            return rc;
+        }
+    }
+
+    *out = scratch->base;
+    *out_len = produced;
     return AF_OK;
 }
 

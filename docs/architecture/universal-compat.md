@@ -202,16 +202,34 @@ five times.
 | Alpine `.apk` | gzip chain of tars | **working** | 5 real packages from `dl-cdn.alpinelinux.org` |
 | Arch `.pkg.tar.zst` | zstd tar | **working** | synthetic packages, byte-exact |
 | Debian/Ubuntu `.deb` | `ar` + `control.tar.gz` + `data.tar.gz` | **working** | a real `dpkg-deb` package |
-| Debian `.deb` (modern) | `ar` + `control.tar.zst` + `data.tar.zst` | zstd is working; the **control** member is not yet wired to it | — |
+| Debian/Ubuntu `.deb` (current) | `ar` + `control.tar.zst` + `data.tar.zst` | **working** | synthetic, byte-exact, both members |
+| Debian/Ubuntu `.deb` (xz) | `ar` + `control.tar.xz` + `data.tar.xz` | **container done, LZMA missing** | refused by name, never misread |
 | Fedora/openSUSE `.rpm` | binary header + archive | not written | — |
-| `.deb` control member in xz | LZMA2 | refused by name | — |
+| anything in bzip2 | — | refused by name | — |
 
-The two remaining gaps are different in kind and worth saying so plainly. The
-`.rpm` reader is ordinary work — a tag directory instead of a tar header, and
-nothing conceptually new. **xz is the one that matters**: it is what a
-significant share of current Debian and Fedora packages still use for at least
-one member, LZMA2 is a different algorithm from both DEFLATE and Zstandard, and
-it cannot be reached by extending either.
+The remaining gaps are different in kind and worth saying so plainly.
+
+**The `.deb` story is closed for compression and open for codecs.** A `.deb`'s
+control and data members are now decompressed according to their **magic bytes**
+rather than their file extensions, so gzip and Zstandard both work and the reader
+no longer cares what the name claims (ADR-013). That matters because `dpkg-deb`
+changed its default to Zstandard underneath the documentation, and a reader that
+only knew `.gz` read the wrong member or none at all. What is still missing is
+LZMA: an xz member is *detected* and *refused by name*, never misread, which is
+the honest half of the work.
+
+**xz is the one that matters, and it is the one with no specification.**
+`docs/architecture/xz-lzma2.md` records why: the `.xz` container is specified in
+prose, but the LZMA2 chunk format and LZMA itself are defined by the reference
+implementation and nothing else. The container layer is written, verified and in
+the gate; the codec is a milestone of its own, and it is the weakest position
+this project has been in — there is no second description of the format to catch
+a misreading, so byte-exact vectors are not a good practice, they are the only
+verification that exists.
+
+**The `.rpm` reader is ordinary work** — a binary tag directory instead of a tar
+header, with nothing conceptually new — and it is the last reader the
+compatibility table needs.
 
 The zstd decoder itself is done. It decodes 48 frames produced by the reference
 implementation — six payload shapes at seven compression levels, plus the same

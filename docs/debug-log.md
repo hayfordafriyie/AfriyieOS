@@ -86,6 +86,68 @@ it is in no test, so a green run still means what it says.
 
 ---
 
+## 2026 — Entries from the xz work
+
+### Unpadded Size is not the size of the block
+
+**Milestone:** v0.10a
+**Symptom:** twelve xz vectors, and nine of them failed with *"an .xz index
+record does not match the block it describes — the file is corrupt"* on a file
+that was not corrupt. Three of them passed, which is what made it findable.
+**Cause:** the index records `Unpadded Size`, which the specification defines as
+the Block Header, the Compressed Data and the Check — **excluding Block
+Padding**. The code computed the offset after the padding and subtracted the
+block start, so every block whose compressed size was not a multiple of four was
+reported as up to three bytes too long.
+**Found by:** the three streams that passed. They were the ones whose padding
+happened to be zero; the nine that failed were the ones with padding, and a
+result that splits cleanly along a field boundary names the field.
+**Lesson:** a field whose name states its own definition can still be misread,
+and the misreading is invisible in exactly the cases where the excluded part is
+empty. The specification's sentence is one clause long: *"Unpadded Size is the
+size of the Block Header, Compressed Data, and Check fields."*
+
+### `0x00` means three different things at three different offsets
+
+**Milestone:** v0.10a
+**Symptom:** the fixture generator classified an **empty** `.xz` stream as
+containing LZMA-compressed chunks, wrote it as a refusal case — and the decoder
+then decoded it successfully, which is how the disagreement surfaced at all.
+**Cause:** the classifier reached the first block by reading the Block Header
+Size byte and multiplying. For a stream with **no blocks**, that byte position
+holds the Index Indicator `0x00`, which is also a perfectly valid chunk control
+byte meaning "end of stream". The walker read four bytes of index as a block
+header and then interpreted whatever followed as chunk controls.
+**Found by:** a test that asserted the decoder REFUSES the file and failed
+because it accepted it. The decoder was right and the classifier was wrong,
+which is the more useful direction for a surprise to come from.
+**Lesson:** in this format `0x00` is the Index Indicator, the LZMA2 end marker,
+and a null padding byte depending only on where it sits. A walker that reads a
+byte without knowing which position it is in reads it correctly and in the wrong
+context.
+
+### The test that refused the thing which had become supported
+
+**Milestone:** v0.10a
+**Symptom:** after the `.deb` reader was changed to decompress its members by
+magic instead of by file extension, one test failed: *"an xz control member is
+refused with AF_ERR_NOTSUP"*.
+**Cause:** the test was right and had become obsolete. It was written when xz was
+unimplemented and asserted a by-name refusal. Once the reader decides by magic an
+xz member is *attempted* — and this build can now decode some xz — so the refusal
+it asserted no longer happens, for a good reason.
+**Fix:** the fixture became a **bzip2** member, the compression that is genuinely
+absent, and the assertion became "the reason names bzip2" rather than "the reason
+mentions compression". The refusal is still tested; it is tested against
+something that is actually refused.
+**Lesson:** a test that pins a limitation explicitly has a lifetime, and it fails
+loudly when the limitation goes away — which is the good case. The bad case is a
+test that pins one *implicitly*, by feeding an unsupported input and asserting
+only `!= AF_OK`. That one keeps passing after support arrives, while asserting
+the opposite of what is now true.
+
+---
+
 ## 2026 — Entries from finishing the Zstandard decoder
 
 Seven more defects, listed in the order they were found, then the two that

@@ -27,14 +27,20 @@
 //
 // WHAT IS NOT DONE, named rather than implied:
 //
-//   * xz members are refused by name rather than misread. xz is the one common
-//     package container still missing; LZMA2 is a different algorithm from both
-//     DEFLATE and Zstandard and is its own piece of work.
+//   * LZMA-compressed chunks in .xz. The CONTAINER is complete and the
+//     uncompressed-chunk layer works; a compressed chunk is refused by name.
+//     This is the last common package compression still missing, and it is a
+//     milestone of its own — see docs/architecture/xz-lzma2.md for what it costs
+//     and for the fact that LZMA2 has no prose specification to work from.
+//   * bzip2, refused by name.
 //   * rpm is not written yet. Its structure is unlike the other four — a binary
 //     header with its own tag directory, not an archive — and it is the last
 //     reader the compatibility table needs.
-//   * The .deb reader handles control.tar and control.tar.gz. A control.tar.zst
-//     member is read but not yet decompressed there; data.tar.zst is.
+//
+// AND WHAT IS NOW DONE that used to be on that list: a .deb's control and data
+// members are decompressed according to their MAGIC, so gzip, zstd and xz are
+// all read, and a zstd-compressed .deb — what current dpkg-deb writes — opens
+// end to end.
 
 #ifndef AFRIYIE_AFPKG_H
 #define AFRIYIE_AFPKG_H
@@ -264,6 +270,23 @@ af_status_t afpkg_gunzip_member(const af_u8 *data, af_size len,
 af_status_t afpkg_zstd(const af_u8 *data, af_size len,
                        af_u8 *out_base, af_size out_size,
                        af_size *out_len, const char **why);
+
+// xz (the .xz container with the LZMA2 filter).
+//
+// PARTIAL BY DESIGN, and the boundary is exact: the CONTAINER is complete —
+// stream header, block headers and their filter lists, block padding, the check
+// field, the index and its records, and the CRC32/CRC64 guarding each — and
+// LZMA2 chunks carrying UNCOMPRESSED data are decoded. A chunk that is
+// LZMA-compressed is refused with AF_ERR_NOTSUP naming the chunk type, so a
+// caller can tell "this is beyond me" apart from "this is broken".
+//
+// Read docs/architecture/xz-lzma2.md before extending it. The LZMA2 chunk layer
+// and the LZMA algorithm have no prose specification — the reference
+// implementation is the definition — which makes ADR-015's byte-exact-vector
+// rule the only thing that can check the work.
+af_status_t afpkg_xz(const af_u8 *data, af_size len,
+                     af_u8 *out_base, af_size out_size,
+                     af_size *out_len, const char **why);
 
 // The raw DEFLATE layer, exposed because it is independently testable and
 // because gzip is a wrapper around it rather than the thing itself. A bug in the

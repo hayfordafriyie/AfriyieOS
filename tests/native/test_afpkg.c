@@ -193,6 +193,69 @@ static void test_good_package(const char *dir)
 }
 
 // =============================================================================
+// A .deb the way dpkg-deb writes one NOW
+//
+// Same payload as test_good_package, in the container a current Debian or Ubuntu
+// package uses: control.tar.zst and data.tar.zst. Every example of a .deb written
+// down for years is a gzip one — dpkg-deb changed its default underneath the
+// documentation — so the container is the only variable here, and a difference
+// between the two results is the container's fault.
+//
+// THIS IS THE TEST THAT SAYS THE ZSTANDARD DECODER MATTERS. Every vector in
+// test_zstd checks the decompressor against its own output; this checks that a
+// package a distribution would actually ship becomes readable. If the decoder
+// were wrong anywhere, the tar headers below would be misaligned and the file
+// list would be empty or nonsense.
+// =============================================================================
+static void test_zstd_compressed_deb(const char *dir)
+{
+    printf("\n=== a .deb compressed with zstandard, as dpkg-deb writes them ===\n");
+
+    if (load(dir, "testzstd_1.2.3-1_amd64.deb") != 0) {
+        s_failures++;
+        return;
+    }
+
+    afpkg_scratch_t scratch = { s_scratch, sizeof(s_scratch) };
+    af_pkg_t pkg;
+
+    const af_status_t rc = afpkg_open(s_file, (af_size)s_file_len, &scratch, &pkg);
+    check(rc == AF_OK, "a .deb with zstd members opens");
+    if (rc != AF_OK) {
+        printf("        %s\n", afpkg_error(&pkg));
+        unload();
+        return;
+    }
+
+    check(pkg.format == AF_BINFMT_DEB, "and is a Debian package");
+    check_str(pkg.info.name, "afriyie-test", "the name came through the zstd member");
+    check_str(pkg.info.version, "1.2.3-1", "and so did the version");
+    check(pkg.info.depends_count == 1, "one Depends line");
+
+    afpkg_iter_t it;
+    afpkg_iter_begin(&it);
+
+    af_pkg_entry_t entry;
+    int files = 0;
+    int saw_binary = 0;
+
+    while (afpkg_iter_next(&pkg, &it, &entry)) {
+        if (!entry.is_directory) {
+            files++;
+        }
+        if (strcmp(entry.path, "usr/bin/afriyie-test") == 0) {
+            saw_binary = 1;
+            check_u64(entry.mode, 0755, "the program's mode survived the zstd member");
+        }
+    }
+
+    check(files == 3, "three regular files, the same as the gzip package");
+    check(saw_binary == 1, "and the program is among them");
+
+    unload();
+}
+
+// =============================================================================
 // 2. Refusals — the cases that matter more than the happy path
 // =============================================================================
 static void test_ar_that_is_not_a_deb(const char *dir)
@@ -240,7 +303,7 @@ static void test_unsupported_compression(const char *dir)
 {
     printf("\n=== a control member compressed with something we cannot read ===\n");
 
-    if (load(dir, "notxzsupport_1.0_amd64.deb") != 0) {
+    if (load(dir, "notbz2support_1.0_amd64.deb") != 0) {
         s_failures++;
         return;
     }
@@ -250,15 +313,16 @@ static void test_unsupported_compression(const char *dir)
 
     const af_status_t rc = afpkg_open(s_file, (af_size)s_file_len, &scratch, &pkg);
     check(rc == AF_ERR_NOTSUP,
-          "an xz control member is refused with AF_ERR_NOTSUP");
+          "a bzip2 control member is refused with AF_ERR_NOTSUP");
 
-    // THE POINT OF THIS TEST. Reading an xz member as if it were gzip produces
-    // bytes that parse as a control file with the wrong name, and the package
-    // then installs under that name. A refusal is strictly better than a
-    // plausible wrong answer.
-    check(strstr(afpkg_error(&pkg), "compression") != NULL ||
-          strstr(afpkg_error(&pkg), "control") != NULL,
-          "the reason names the unsupported compression");
+    // THE POINT OF THIS TEST. Reading a member in a compression this build does
+    // not implement as if it were gzip produces bytes that parse as a control
+    // file with the wrong name, and the package then installs under that name. A
+    // refusal is strictly better than a plausible wrong answer — and naming the
+    // compression is better still, because otherwise the caller goes looking for
+    // corruption in a file that is intact.
+    check(strstr(afpkg_error(&pkg), "bzip2") != NULL,
+          "and the reason names bzip2 rather than blaming the tar");
 
     unload();
 }
@@ -1086,6 +1150,153 @@ static void test_zstd(const char *dir)
 }
 
 // =============================================================================
+// xz
+//
+// The container layer, verified byte for byte, and the boundary of what is
+// decoded stated as a test rather than as a comment.
+//
+// WHY THE REFUSALS ARE ASSERTED AND NOT MERELY EXCLUDED. It would be easy to
+// generate only the streams this build can decode and say nothing about the
+// rest. That would leave "this decoder handles xz" true in the suite and false
+// in the world. So the fixtures containing LZMA-compressed chunks are kept,
+// asserted to be REFUSED, and asserted to say why — which is also what stops a
+// future regression from turning a refusal into wrong output.
+// =============================================================================
+static void test_xz(const char *dir)
+{
+    static const char *names[] = { "xz_random_one", "xz_random_small",
+                                   "xz_random_large", "xz_empty",
+                                   "xz_text", "xz_zeros" };
+    static const int presets[] = { 0, 1, 6 };
+
+    printf("\n=== xz ===\n");
+
+    static unsigned char out[1 * 1024 * 1024];
+    char path[1024];
+
+    for (unsigned n = 0; n < sizeof(names) / sizeof(names[0]); n++) {
+        long raw_len = 0;
+        snprintf(path, sizeof(path), "%s/%s.raw", dir, names[n]);
+        unsigned char *raw = read_all(path, &raw_len);
+        if (raw == NULL) {
+            s_failures++;
+            printf("  FAIL  cannot open %s\n", path);
+            continue;
+        }
+
+        for (unsigned k = 0; k < sizeof(presets) / sizeof(presets[0]); k++) {
+            long zlen = 0;
+            af_size got_len = 0;
+            const char *why = "";
+
+            // --- the streams this build decodes -------------------------------
+            snprintf(path, sizeof(path), "%s/%s.%d.xz", dir, names[n],
+                     presets[k]);
+            unsigned char *z = read_all(path, &zlen);
+
+            if (z != NULL) {
+                const af_status_t rc = afpkg_xz(z, (af_size)zlen, out,
+                                                (af_size)sizeof(out), &got_len,
+                                                &why);
+                char what[160];
+                snprintf(what, sizeof(what), "%s.%d is byte-exact", names[n],
+                         presets[k]);
+
+                const int ok = (rc == AF_OK) && ((long)got_len == raw_len) &&
+                               (raw_len == 0 ||
+                                memcmp(out, raw, (size_t)raw_len) == 0);
+                check(ok, what);
+                if (!ok) {
+                    printf("        status=%d got=%ld want=%ld why=%s\n", (int)rc,
+                           (long)got_len, raw_len, why);
+                }
+                free(z);
+            }
+
+            // --- and the ones it must refuse ----------------------------------
+            snprintf(path, sizeof(path), "%s/%s.%d.lzma.xz", dir, names[n],
+                     presets[k]);
+            z = read_all(path, &zlen);
+
+            if (z != NULL) {
+                const af_status_t rc = afpkg_xz(z, (af_size)zlen, out,
+                                                (af_size)sizeof(out), &got_len,
+                                                &why);
+                char what[160];
+                snprintf(what, sizeof(what),
+                         "%s.%d is refused because it has an LZMA chunk",
+                         names[n], presets[k]);
+                check(rc == AF_ERR_NOTSUP, what);
+                if (rc == AF_ERR_NOTSUP) {
+                    check(strstr(why, "LZMA-compressed") != NULL,
+                          "and the reason names the chunk type");
+                } else {
+                    printf("        status=%d why=%s\n", (int)rc, why);
+                }
+                free(z);
+            }
+        }
+
+        free(raw);
+    }
+
+    // --- negatives ------------------------------------------------------------
+    //
+    // Different mechanisms, corrupted one at a time: the block header's CRC32,
+    // the stream footer, truncation, and the magic. A decoder that verified only
+    // the first would pass the first check and fail the rest.
+    printf("\n=== xz corruption ===\n");
+
+    {
+        long zlen = 0;
+        snprintf(path, sizeof(path), "%s/xz_random_small.1.xz", dir);
+        unsigned char *z = read_all(path, &zlen);
+
+        if (z == NULL) {
+            s_failures++;
+            printf("  FAIL  cannot open %s\n", path);
+        } else {
+            af_size got_len = 0;
+            const char *why = "";
+
+            // Byte 14 is inside the block header's own fields, so the header
+            // CRC32 is the thing that catches it.
+            const unsigned char saved_hdr = z[14];
+            z[14] = (unsigned char)(saved_hdr ^ 0x01u);
+            af_status_t rc = afpkg_xz(z, (af_size)zlen, out,
+                                      (af_size)sizeof(out), &got_len, &why);
+            check(rc != AF_OK, "a corrupted block header is refused");
+            check(strstr(why, "block header") != NULL,
+                  "and the reason names the block header");
+            z[14] = saved_hdr;
+
+            // The last byte of the file is the stream footer's magic.
+            const unsigned char saved_tail = z[zlen - 1];
+            z[zlen - 1] = (unsigned char)(saved_tail ^ 0x01u);
+            rc = afpkg_xz(z, (af_size)zlen, out, (af_size)sizeof(out), &got_len,
+                          &why);
+            check(rc != AF_OK, "a corrupted stream footer is refused");
+            z[zlen - 1] = saved_tail;
+
+            rc = afpkg_xz(z, (af_size)(zlen / 2), out, (af_size)sizeof(out),
+                          &got_len, &why);
+            check(rc != AF_OK, "a truncated .xz is refused");
+
+            const unsigned char saved_magic = z[0];
+            z[0] = 0x00;
+            rc = afpkg_xz(z, (af_size)zlen, out, (af_size)sizeof(out), &got_len,
+                          &why);
+            check(rc == AF_ERR_INVAL, "something that is not .xz is refused");
+            check_str(why, "not an .xz file: the header magic bytes are wrong",
+                      "and the reason names the magic bytes");
+            z[0] = saved_magic;
+
+            free(z);
+        }
+    }
+}
+
+// =============================================================================
 int main(int argc, char **argv)
 {
     const char *dir = (argc > 1) ? argv[1] : "build/fixtures";
@@ -1094,6 +1305,7 @@ int main(int argc, char **argv)
     printf("fixtures: %s\n", dir);
 
     test_good_package(dir);
+    test_zstd_compressed_deb(dir);
     test_ar_that_is_not_a_deb(dir);
     test_truncated(dir);
     test_unsupported_compression(dir);
@@ -1103,6 +1315,7 @@ int main(int argc, char **argv)
     test_apk(dir);
     test_pacman(dir);
     test_zstd(dir);
+    test_xz(dir);
 
     printf("\n===============================================================\n");
     if (s_failures == 0) {

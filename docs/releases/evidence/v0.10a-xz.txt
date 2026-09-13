@@ -1,0 +1,70 @@
+AfriyieOS v0.10a — xz evidence
+generated: 2026-09-13T23:34:03Z
+host:      Linux 6.18.33.2-microsoft-standard-WSL2 x86_64
+python:    Python 3.14.4
+
+===============================================================================
+1. What the fixtures are, and why these ones
+===============================================================================
+
+Every .xz stream is produced by the REFERENCE implementation (liblzma via
+Python's lzma module) and compared byte for byte against the payload it was
+built from. Streams are classified by walking their LZMA2 chunk control
+bytes, so the ones this build claims to decode and the ones it must refuse
+are separated by the format's own structure rather than by a hand list.
+
+xz_empty.0.xz
+xz_empty.1.xz
+xz_empty.6.xz
+xz_empty.raw
+xz_random_large.0.xz
+xz_random_large.1.xz
+xz_random_large.6.xz
+xz_random_large.raw
+xz_random_one.0.xz
+xz_random_one.1.xz
+xz_random_one.6.xz
+xz_random_one.raw
+xz_random_small.0.xz
+xz_random_small.1.xz
+xz_random_small.6.xz
+xz_random_small.raw
+xz_text.0.lzma.xz
+xz_text.1.lzma.xz
+xz_text.6.lzma.xz
+xz_text.raw
+xz_zeros.0.lzma.xz
+xz_zeros.1.lzma.xz
+xz_zeros.6.lzma.xz
+xz_zeros.raw
+
+decodable: 12
+must be refused (LZMA chunks): 6
+
+===============================================================================
+2. The decoder against those vectors, in the gate
+===============================================================================
+
+=== xz ===
+
+=== xz corruption ===
+
+===============================================================
+  187 checks passed
+===============================================================
+
+===============================================================
+  native tests: 1 suite(s) passed
+
+===============================================================================
+3. The payoff: a .deb the way current dpkg-deb writes one
+===============================================================================
+
+control.tar.zst and data.tar.zst — what a current Debian or Ubuntu package
+uses. The reader picks its decompressor from the member's MAGIC BYTES, not
+from the file extension, so gzip and Zstandard both work and the reader no
+longer cares what the name claims.
+
+=== a .deb compressed with zstandard, as dpkg-deb writes them ===
+
+the same package in gzip, for comparison:
