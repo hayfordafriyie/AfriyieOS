@@ -79,6 +79,30 @@ BOOT_CFLAGS=(
     -Iboot/uefi
 )
 
+# User space. Unprivileged, so it keeps the red zone and may use SSE — but it is
+# linked at 4 GiB, above everything the small code model can address, so it needs
+# -mcmodel=large. Leaving that out here would make this check unable to fail on
+# the exact class of bug (a 32-bit absolute reference) that the real link catches,
+# which is the whole point of the flag being in cmake/flags.cmake.
+#
+# -Wa,--noexecstack matters for the same reason as in the kernel: an object
+# without a .note.GNU-stack section makes the linker assume an executable stack.
+USER_CFLAGS=(
+    -ffreestanding
+    -fno-stack-protector
+    -fno-pic -fno-pie
+    -fno-omit-frame-pointer
+    -fno-builtin
+    -mcmodel=large
+    -Wa,--noexecstack
+    -Wall -Wextra -Wshadow -Wpointer-arith -Wcast-align -Wwrite-strings
+    -Wredundant-decls -Wmissing-declarations -Wno-unused-parameter
+    -Werror
+    -std=gnu11
+    -g -O0
+    -Ilibs/libaf/include
+)
+
 c_ok=0;   c_fail=0
 asm_ok=0; asm_fail=0
 failures=()
@@ -122,6 +146,15 @@ while IFS= read -r file; do
     check_c "$file" "${BOOT_CFLAGS[@]}"
 done < <(find boot -name '*.c' | sort)
 
+# User space was added to this check at v0.4, when it stopped being hypothetical.
+# Before that, the only thing that compiled apps/ and libs/ was the real cross
+# build — a several-minute round trip to discover a missing semicolon, which is
+# precisely the feedback loop this script exists to shorten.
+echo "=== user-space C sources (unprivileged, 4 GiB code model) ==="
+while IFS= read -r file; do
+    check_c "$file" "${USER_CFLAGS[@]}"
+done < <(find libs apps -name '*.c' 2>/dev/null | sort)
+
 # -----------------------------------------------------------------------------
 # Assembly
 # -----------------------------------------------------------------------------
@@ -151,6 +184,24 @@ else
     echo "=== assembly: SKIPPED (nasm not installed) ==="
 fi
 
+# GNU as sources. These are .S, not .asm: they go through the C preprocessor and
+# are assembled by the C compiler, so they are checked with "$CC" and not nasm.
+# The distinction is not cosmetic — it is exactly how crt0.S came to contain
+# clang's `.section .note.GNU-stack noalloc noexec nowrite` word form, which GNU
+# as rejects and LLVM accepts.
+echo "=== user-space assembly (gas, via cc) ==="
+while IFS= read -r file; do
+    [ "$VERBOSE" = 1 ] && printf '  as   %s\n' "$file"
+    obj="/tmp/af-check-$(echo "$file" | tr '/' '_').o"
+    if err=$("$CC" -c "$file" -o "$obj" 2>&1); then
+        asm_ok=$((asm_ok + 1)); rm -f "$obj"
+    else
+        asm_fail=$((asm_fail + 1)); failures+=("$file")
+        printf '\n\033[1;31mFAIL\033[0m %s\n' "$file"
+        printf '%s\n' "$err" | sed 's/^/     /'
+    fi
+done < <(find libs apps -name '*.S' 2>/dev/null | sort)
+
 # -----------------------------------------------------------------------------
 # Summary
 # -----------------------------------------------------------------------------
@@ -158,7 +209,7 @@ echo
 echo "==============================================================="
 printf '  C        : %3d ok, %3d failed\n' "$c_ok" "$c_fail"
 if command -v "$AS" >/dev/null 2>&1; then
-    printf '  assembly : %3d ok, %3d failed\n' "$asm_ok" "$asm_fail"
+    printf '  assembly : %3d ok, %3d failed   (nasm + gas)\n' "$asm_ok" "$asm_fail"
 fi
 echo "==============================================================="
 

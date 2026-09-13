@@ -49,10 +49,34 @@ AF_NORETURN static void fail(const char *what, af_u64 detail)
     af_exit(1);
 }
 
+/* Reads the code segment selector. This is the one thing a program can check
+ * about its own privilege that the kernel cannot check for it: if this runs at
+ * all and the bottom two bits are 3, the CPU is enforcing a boundary, not the
+ * kernel politely declining to look at something. */
+static af_u16 current_cs(void)
+{
+    af_u16 cs;
+    __asm__ __volatile__("mov %%cs, %0" : "=r"(cs));
+    return cs;
+}
+
 int main(void)
 {
     af_puts("----------------------------------------------------------\n");
     af_puts(banner);
+
+    /* -- 0. We are actually in ring 3 -------------------------------------
+     * The requested privilege level is the low two bits of CS. Anything else
+     * means the "user" program is running with kernel privileges, and every
+     * other check below is worthless — so this one runs first. */
+    const af_u16 cs = current_cs();
+    if ((cs & 3u) != 3u) {
+        fail("not running at CPL 3 (cs)", (af_u64)cs);
+    }
+
+    af_puts("init:   cs = 0x");
+    af_putu(cs, 16);
+    af_puts(", CPL = 3\n");
 
     /* -- 1. .bss must be zero ---------------------------------------------
      * A loader that maps frames without clearing them, or that hands over a
@@ -148,6 +172,64 @@ int main(void)
     af_puts("] = ");
     af_puts(stages[stage]);
     af_putc('\n');
+
+    /* -- 7. Hostile pointers must be refused, not dereferenced -------------
+     * The kernel validates every pointer arriving through a system call. This
+     * is the only place that can test it, because it needs a program willing to
+     * pass bad pointers — and if the validation is wrong the failure is not an
+     * error code, it is a page fault in kernel mode and a dead machine. So each
+     * of these must return a negative status and let this program continue.
+     *
+     * A specific error code is deliberately not asserted. User space has no copy
+     * of the status table, and duplicating it here is how the syscall numbers
+     * drifted out of step between two documents earlier in this milestone. What
+     * matters is the shape: an error, not a fault.
+     */
+    static const struct {
+        const char *what;
+        af_u64      addr;
+        af_u64      len;
+    } bad[] = {
+        { "null page",              0x0000000000000000ULL, 16 },
+        { "unmapped but in range",  0x00000000DEADBEEFULL, 16 },
+        { "a hole in our own image",0x0000000100005000ULL, 16 },
+        { "length that wraps",      0x00007FFFFFFFFFF0ULL, ~(af_u64)0 },
+        { "past the user top",      0x00007FFFFFFFFFF0ULL, 64 },
+        { "zero length",            0x0000000100000000ULL, 0 },
+    };
+
+    for (af_u32 i = 0; i < (af_u32)(sizeof(bad) / sizeof(bad[0])); i++) {
+        const af_i64 rc = af_write((const char *)(af_u64)bad[i].addr, bad[i].len);
+
+        if (rc >= 0) {
+            af_puts("init: FAIL: sys_debug_write accepted a bad pointer: ");
+            af_puts(bad[i].what);
+            af_puts(" (returned ");
+            af_puti(rc);
+            af_puts(")\n");
+            af_exit(1);
+        }
+    }
+
+    af_puts("init:   ");
+    af_putu(sizeof(bad) / sizeof(bad[0]), 10);
+    af_puts(" hostile pointers refused with an error, no kernel fault\n");
+
+    /* The other half of the same property: validation must not be so strict
+     * that it rejects memory the program legitimately owns. The banner lives in
+     * .rodata — mapped, user-readable, NOT writable — and reading it through a
+     * system call must succeed. A validator that demanded write access for a
+     * read would pass every test above and break every real program.
+     *
+     * The four bytes come back without a trailing newline, so they are fenced
+     * with quotes and the line is terminated here. A marker printed by a
+     * different test must never end up sharing a line with this one. */
+    af_puts("init:   a read-only buffer reads back through a syscall: \"");
+    const af_i64 ro = af_write(banner, 4);
+    if (ro != 4) {
+        fail("a read-only but valid buffer was refused", (af_u64)(-ro));
+    }
+    af_puts("\"\n");
 
     /* The marker the boot test waits for. Printed by user code, in ring 3,
      * after every check above has passed — so it is evidence that a program

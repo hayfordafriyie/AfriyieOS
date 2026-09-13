@@ -293,74 +293,87 @@ AfriyieOS 0.1.0 (Seed) booting
 [    0.000000] INFO  virtio-blk: device offered features 0x71006ED4; accepting none (read-only: no, flush: yes)
 [    0.000000] INFO  virtio-blk: queue 0: device offers 256 descriptors, using 256 (9222 bytes at 0x1E66000, PFN 7782), request buffer 7 sectors
 [    0.000000] INFO  virtio-blk: ready: 135168 sectors of 512 bytes = 66 MiB
-[    0.020000] INFO  sched : idle thread running (tid 2)
-[    0.040000] INFO  test  : scheduler acceptance test: two threads, 200 iterations each
-[    0.050000] INFO  thread: created tid 3 'alpha': 16 KiB stack at 0x1E75000, priority 4
-[    0.080000] INFO  thread: created tid 4 'beta': 16 KiB stack at 0x1E81000, priority 4
-[    0.090000] INFO  thread: tid 3 'alpha' exiting after 0 ticks and 201 switches
-[    0.110000] INFO  thread: tid 4 'beta' exiting after 0 ticks and 201 switches
-[    0.110000] DEBUG test  :   ok   both threads ran to completion (200 iterations each; waited 1 ticks)
-[    0.110000] INFO  test  :   first 72 entries: ABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABAB
-[    0.110000] DEBUG test  :   ok   399 A/B transitions, longest run 1 — strict round-robin
-[    0.110000] INFO  thread: created tid 5 'spinner': 16 KiB stack at 0x1E85000, priority 4
-[    0.220000] DEBUG test  :   ok   preemption: a non-yielding thread was interrupted (10583477 iterations counted while the boot thread slept)
-[    0.230000] INFO  thread: tid 5 'spinner' exiting after 7 ticks and 4 switches
-[    0.260000] DEBUG test  :   ok   an exited thread was reaped and removed from the table
-[    0.260000] INFO  boot  : AF_SCHED_OK
-[    0.260000] INFO  sched : 26 ticks, 418 context switches, 2 live threads
-[    0.260000] INFO  sched :   run queue priority 7: 1 thread(s)
-[    0.260000] INFO  sched :   running: tid 1 'boot' (slice 2)
-[    0.260000] DEBUG test  :   ok   read sector 0 from an actual disk; boot signature 0xAA55 is present
-[    0.260000] DEBUG test  :   ok   protective MBR partition type is 0xEE — this is the GPT disk the system booted from
-[    0.260000] DEBUG test  :   ok   4-sector read agrees with the single-sector read
-[    0.260000] ERROR block : virtio-blk0: LBA 135168 is past the end of the device (135168 sectors)
-[    0.260000] DEBUG test  :   ok   a read past the end of the device is refused with ERR_INVAL
-[    0.260000] INFO  boot  : AF_BLOCK_OK
-[    0.260000] INFO  gpt   : GPT with 1 partition(s):
-[    0.260000] INFO  gpt   :   [0] LBA 2048..135134 (64 MiB)  'EFI System Partition'
-[    0.260000] DEBUG test  :   ok   found the EFI System Partition at LBA 2048 (64 MiB)
-[    0.260000] INFO  fat32 : mounted at LBA 2048: 512 bytes/sector, 1 sectors/cluster (512 byte clusters)
-[    0.260000] INFO  fat32 :   FAT at LBA 2080 (1040 sectors x 2 copies), data at LBA 4160, root cluster 2, 130975 clusters
-[    0.260000] DEBUG test  :   ok   mounted FAT32 from the ESP
-[    0.260000] INFO  test  :   /EFI/  (0 bytes)
-[    0.260000] INFO  test  :   /HELLO.TXT  (16 bytes)
-[    0.260000] INFO  test  :   /INIT.ELF  (10040 bytes)
-[    0.260000] DEBUG test  :   ok   listed 3 entries in the root directory
-[    0.260000] DEBUG test  :   ok   read 16 bytes from /HELLO.TXT and the contents match exactly
-[    0.260000] INFO  test  :   file contents: "Hello from disk
+[    0.010000] INFO  test  : scheduler acceptance test: two threads, 200 iterations each
+[    0.010000] INFO  thread: created tid 3 'alpha': 16 KiB stack at 0x1E75000, priority 4
+[    0.010000] INFO  thread: created tid 4 'beta': 16 KiB stack at 0x1E81000, priority 4
+[    0.010000] INFO  thread: tid 3 'alpha' exiting after 0 ticks and 201 switches
+[    0.010000] INFO  thread: tid 4 'beta' exiting after 0 ticks and 201 switches
+[    0.010000] INFO  sched : idle thread running (tid 2)
+[    0.030000] DEBUG test  :   ok   both threads ran to completion (200 iterations each; waited 1 ticks)
+[    0.030000] INFO  test  :   first 72 entries: ABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABAB
+[    0.030000] DEBUG test  :   ok   399 A/B transitions, longest run 1 — strict round-robin
+[    0.030000] INFO  thread: created tid 3 'spinner': 16 KiB stack at 0x1E75000, priority 4
+[    0.130000] DEBUG test  :   ok   preemption: a non-yielding thread was interrupted (13202600 iterations counted while the boot thread slept)
+[    0.130000] INFO  thread: tid 3 'spinner' exiting after 6 ticks and 4 switches
+[    0.150000] DEBUG test  :   ok   an exited thread was reaped and removed from the table
+[    0.150000] INFO  boot  : AF_SCHED_OK
+[    0.150000] INFO  sched : 15 ticks, 413 context switches, 2 live threads
+[    0.150000] INFO  sched :   run queue priority 7: 1 thread(s)
+[    0.150000] INFO  sched :   running: tid 1 'boot' (slice 2)
+[    0.150000] DEBUG test  :   ok   read sector 0 from an actual disk; boot signature 0xAA55 is present
+[    0.150000] DEBUG test  :   ok   protective MBR partition type is 0xEE — this is the GPT disk the system booted from
+[    0.150000] DEBUG test  :   ok   4-sector read agrees with the single-sector read
+[    0.150000] ERROR block : virtio-blk0: LBA 135168 is past the end of the device (135168 sectors)
+[    0.150000] DEBUG test  :   ok   a read past the end of the device is refused with ERR_INVAL
+[    0.150000] INFO  boot  : AF_BLOCK_OK
+[    0.150000] INFO  gpt   : GPT with 1 partition(s):
+[    0.150000] INFO  gpt   :   [0] LBA 2048..135134 (64 MiB)  'EFI System Partition'
+[    0.150000] DEBUG test  :   ok   found the EFI System Partition at LBA 2048 (64 MiB)
+[    0.150000] INFO  fat32 : mounted at LBA 2048: 512 bytes/sector, 1 sectors/cluster (512 byte clusters)
+[    0.150000] INFO  fat32 :   FAT at LBA 2080 (1040 sectors x 2 copies), data at LBA 4160, root cluster 2, 130975 clusters
+[    0.150000] DEBUG test  :   ok   mounted FAT32 from the ESP
+[    0.150000] INFO  test  :   /EFI/  (0 bytes)
+[    0.150000] INFO  test  :   /HELLO.TXT  (16 bytes)
+[    0.150000] INFO  test  :   /INIT.ELF  (10712 bytes)
+[    0.150000] DEBUG test  :   ok   listed 3 entries in the root directory
+[    0.150000] DEBUG test  :   ok   read 16 bytes from /HELLO.TXT and the contents match exactly
+[    0.150000] INFO  test  :   file contents: "Hello from disk
 "
-[    0.260000] DEBUG test  :   ok   a missing path returns ERR_NOENT rather than walking off the directory
-[    0.260000] INFO  boot  : AF_FS_OK
-[    0.260000] INFO  thread: created tid 3 'usermode-stub': 16 KiB stack at 0x1E75000, priority 4
-[    0.270000] INFO  test  : user mode test: building a ring-3 program at 0x200000000
-[    0.280000] DEBUG test  :   ok   built a 65-byte ring-3 program; message at 0x200000080
-[    0.300000] DEBUG test  :   ok   code page is user+exec and NOT writable; stack is user+writable and NOT executable
-[    0.320000] DEBUG test  :   ok   the kernel image at 0x100000 is NOT user-accessible
-[    0.340000] INFO  boot  : AF_USER_PREPARED
-[    0.350000] INFO  test  :   crossing into ring 3 at 0x200000000 with stack 0x200011000
-[    0.370000] INFO  test  :   ----------------------------------------------------------
+[    0.150000] DEBUG test  :   ok   a missing path returns ERR_NOENT rather than walking off the directory
+[    0.150000] INFO  boot  : AF_FS_OK
+[    0.150000] INFO  thread: created tid 3 'usermode-stub': 16 KiB stack at 0x1E75000, priority 4
+[    0.160000] INFO  test  : user mode test: building a ring-3 program at 0x200000000
+[    0.160000] DEBUG test  :   ok   built a 65-byte ring-3 program; message at 0x200000080
+[    0.170000] DEBUG test  :   ok   code page is user+exec and NOT writable; stack is user+writable and NOT executable
+[    0.170000] DEBUG test  :   ok   the kernel image at 0x100000 is NOT user-accessible
+[    0.170000] INFO  boot  : AF_USER_PREPARED
+[    0.170000] INFO  test  :   crossing into ring 3 at 0x200000000 with stack 0x200011000
+[    0.170000] INFO  test  :   ----------------------------------------------------------
 Hello from ring 3!
 Hello from ring 3!
-[    0.430000] INFO  syscall: user thread exiting with code 0
-[    0.430000] INFO  boot  : AF_USER_OK
-[    0.430000] INFO  syscall: 3 system calls handled from ring 3
-[    0.430000] INFO  thread: tid 3 'usermode-stub' exiting after 17 ticks and 9 switches
-[    0.450000] INFO  boot  : ring-3 stub thread finished; loading init
-[    0.450000] INFO  elf   : loading '/INIT.ELF': 10040 bytes read
-[    0.450000] INFO  elf   :   entry 0x100000000, 3 program header(s), ET_EXEC
-[    0.450000] INFO  elf   :   segment 0: 0x100000000..0x100000FFF (1 pages) r-x
-[    0.450000] INFO  elf   :   segment 1: 0x100001000..0x100001FFF (1 pages) r--
-[    0.450000] INFO  elf   :   segment 2: 0x100002000..0x100003FFF (2 pages) rw- +bss
-[    0.450000] INFO  elf   :   stack: 64 KiB at 0x1000F0000..0x1000FFFFF (user+writable, non-exec)
-[    0.450000] INFO  elf   : entering '/INIT.ELF' at 0x100000000 in ring 3
-[    0.450000] INFO  elf   : ----------------------------------------------------------
-[    0.450000] INFO  boot  : AF_EXEC_PREPARED
+[    0.170000] INFO  syscall: user thread exiting with code 0
+[    0.170000] INFO  boot  : AF_USER_OK
+[    0.170000] INFO  syscall: 3 system calls handled from ring 3
+[    0.170000] INFO  thread: tid 3 'usermode-stub' exiting after 2 ticks and 2 switches
+[    0.190000] INFO  boot  : ring-3 stub thread finished; loading init
+[    0.190000] INFO  elf   : loading '/INIT.ELF': 10712 bytes read
+[    0.190000] INFO  elf   :   entry 0x100000000, 3 program header(s), ET_EXEC
+[    0.190000] INFO  elf   :   segment 0: 0x100000000..0x100000FFF (1 pages) r-x
+[    0.190000] INFO  elf   :   segment 1: 0x100001000..0x100001FFF (1 pages) r--
+[    0.190000] INFO  elf   :   segment 2: 0x100002000..0x100003FFF (2 pages) rw- +bss
+[    0.190000] INFO  elf   :   stack: 64 KiB at 0x1000F0000..0x1000FFFFF (user+writable, non-exec)
+[    0.190000] INFO  elf   : entering '/INIT.ELF' at 0x100000000 in ring 3
+[    0.190000] INFO  elf   : ----------------------------------------------------------
+[    0.190000] INFO  boot  : AF_EXEC_PREPARED
 ----------------------------------------------------------
 init: hello from a program loaded off the disk
+init:   cs = 0x1b, CPL = 3
 init:   .bss is zero (4096 bytes)
 init:   .data is intact (47 bytes of banner text)
 init:   .bss holds a written pattern, checksum 522240
-init:   clock 700000000 ns -> 720000000 ns (20000000 ns across a yield)
+init:   clock 200000000 ns -> 220000000 ns (20000000 ns across a yield)
 init:   stage[0] = boot
+[    0.220000] WARN  syscall: sys_debug_write: rejected buffer 0x0 length 16 (out of the user range, wrapping, or not mapped user-readable)
+[    0.220000] WARN  syscall: sys_debug_write: rejected buffer 0xDEADBEEF length 16 (out of the user range, wrapping, or not mapped user-readable)
+[    0.220000] WARN  syscall: sys_debug_write: rejected buffer 0x100005000 length 16 (out of the user range, wrapping, or not mapped user-readable)
+[    0.220000] WARN  syscall: sys_debug_write: rejected buffer 0x7FFFFFFFFFF0 length 4096 (out of the user range, wrapping, or not mapped user-readable)
+[    0.220000] WARN  syscall: sys_debug_write: rejected buffer 0x7FFFFFFFFFF0 length 64 (out of the user range, wrapping, or not mapped user-readable)
+[    0.220000] WARN  syscall: sys_debug_write: rejected buffer 0x100000000 length 0 (out of the user range, wrapping, or not mapped user-readable)
+init:   6 hostile pointers refused with an error, no kernel fault
+init:   a read-only buffer reads back through a syscall: "init"
 AF_EXEC_RAN
 init: all checks passed, exiting
+----------------------------------------------------------
+[    0.220000] INFO  syscall: user thread exiting with code 0
+[    0.220000] INFO  thread: tid 1 'boot' exiting after 2 ticks and 7 switches
+qemu-system-x86_64: terminating on signal 15 from pid 448 (python3)

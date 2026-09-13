@@ -23,6 +23,97 @@ Lesson:     the generalisable part
 
 ## 2025 — Entries from v0.4 development
 
+### A range check is not a mapping check
+
+**Milestone:** v0.4 (found by re-reading the validator against the fault path, not
+by a crash — the crash it prevents had not happened yet)
+**Symptom:** none observed. `sys_debug_write` checked that the buffer's address was
+in the user half, that the length did not wrap, and that the end did not cross into
+the kernel half — and then dereferenced it. A program passing a pointer into a hole
+between two of its own mappings would have had that pointer read by the kernel, in
+kernel mode, and taken a page fault with `CR2` pointing at user memory.
+**Cause:** two different questions were being conflated.
+
+```
+"is this address in the user half?"   — answered by the range check
+"does this address exist?"            — not asked
+```
+
+Every check in the function was a comparison against constants. None of them
+consulted the page tables, which is where the answer to the second question lives.
+The code even said so, in a comment claiming this would be fixed "when processes
+proper arrive" — which was wrong twice: the page tables were already reachable
+through `hal_query_flags`, and the resulting fault would have been the *kernel's*
+to answer for, not the process's.
+**Fix:** `user_pages_ok` walks every page the range touches and requires each to be
+present, carry the `USER` bit, and be writable if the call writes. The walk starts
+at the first page and rounds the end outwards, so a range starting near the end of
+a mapped page cannot spill into the next one. `AF_MAX_VALIDATED_PAGES` (16 MiB)
+bounds it, because the length is attacker-controlled and a page-table lookup per
+page is a denial-of-service vector.
+**Found by:** reading the validator next to the page-fault handler while writing
+the acceptance test for it. The test — six malformed buffers, each of which must
+return an error rather than kill the machine — is what turned "this looks right"
+into "this is checked".
+**Lesson:** a bounds check made only of comparisons against constants cannot know
+anything about what is actually mapped. That is not a refinement to add later; it
+is a different question, and until it is asked the kernel is dereferencing a
+pointer it was told to trust. The general form: whenever a value from user space is
+checked, ask whether the check is about the *value* or about the *memory*, and make
+sure it is the second one before the dereference.
+
+---
+
+### The boot test was reading a buffer, not a log
+
+**Milestone:** v0.4
+**Symptom:** `AF_EXEC_RAN` was reported `MISS` while the failure report printed, a
+few lines further down, the kernel output that contained it:
+
+```
+  ok   AF_EXEC_PREPARED
+  MISS AF_EXEC_RAN
+...
+SERIAL OUTPUT
+...
+init:   6 hostile pointers refused with an error, no kernel fault
+initAF_EXEC_RAN
+init: all checks passed, exiting
+```
+The test ran for its full 90-second timeout and never saw a marker that was on disk
+by the time it gave up.
+**Cause:** the runner used `-serial file:PATH` and polled that file. QEMU writes
+the file through a **buffered `FILE`**, and the final partial buffer stays in
+QEMU's own memory until the process exits cleanly. `process.terminate()` followed
+by `kill()` discards it.
+
+The lost bytes are always the *tail* — which is exactly where the last markers are.
+Nothing the kernel printed after `AF_EXEC_RAN` pushed the buffer past a 4 KiB
+boundary, so the marker sat in the unflushed remainder on every run. It survived on
+earlier runs only because more output followed it; adding six syscall warning lines
+above it moved the boundary and the marker fell back into the gap.
+**Fix:** test mode now uses `-serial stdio` and reads the pipe on a dedicated
+thread, accumulating in memory and writing the log file as a copy for humans rather
+than as the source of truth. A pipe has no such buffer: QEMU writes to the
+descriptor, the reader drains it continuously, and nothing is lost when the process
+is killed. After the process is reaped the reader is joined and the accumulated
+text drained before the verdict is computed.
+**Found by:** the contradiction itself — a `MISS` printed immediately above its own
+counter-evidence. The first hypothesis was a marker split across a line boundary
+(the output really did read `initAF_EXEC_RAN`, a missing newline in the test
+program, fixed separately); the second was that the log tail was truncated
+mid-word, which `file:` buffering explains and nothing else does.
+**Lesson:** when a test's verdict disagrees with the evidence it prints, the
+harness is the suspect — and a harness that reads a *file another process is
+writing* is reading a copy whose completeness is not guaranteed at any moment. The
+log had been truncated mid-word for several runs and it went unnoticed because only
+the tail was affected and the tail was usually irrelevant. Two smaller lessons came
+out of it: a marker printed by one test must never share a line with another test's
+output, and "the marker is missing" should always be checked against "is the
+marker's *output* missing" before anything else is suspected.
+
+---
+
 ### The ELF loader freed the buffer its header pointer pointed into
 
 **Milestone:** v0.4

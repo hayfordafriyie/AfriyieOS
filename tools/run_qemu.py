@@ -29,6 +29,7 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from typing import List, Optional
 
@@ -237,9 +238,26 @@ def run_test(args, cmd: List[str]) -> int:
     )
 
     cmd += ["-display", "none"]
-    # file: rather than stdio so the log survives a timeout kill and can be
-    # attached to a CI failure.
-    cmd += ["-serial", f"file:{serial_log}"]
+    # A PIPE, not a file.
+    #
+    # `-serial file:PATH` looks like the obvious choice — the log survives a
+    # timeout kill and can be attached to a CI failure — and it was used here
+    # until it produced a failure that made no sense. QEMU writes that file
+    # through a buffered FILE, so the last partial buffer stays in QEMU's memory
+    # until it exits cleanly. Kill it, and those bytes are gone.
+    #
+    # The lost bytes are exactly the tail — and the tail is where the last
+    # markers are. AF_EXEC_RAN, which the user program prints microseconds
+    # before it exits and the machine goes quiet, sat inside that buffer: the
+    # marker was present in every sense except on disk, and the boot test
+    # reported MISS while printing the kernel's output that contained it. The
+    # test was measuring QEMU's flush timing, not the kernel.
+    #
+    # A pipe has no such buffer. QEMU writes to the descriptor, the OS holds the
+    # bytes, and the reader thread below drains them continuously — so nothing
+    # is lost when the process is killed. The log file is still written, but as
+    # a copy for humans rather than as the source of truth.
+    cmd += ["-serial", "stdio"]
     cmd += ["-monitor", "none"]
 
     log(f"test mode: headless boot, {args.timeout}s timeout")
@@ -248,8 +266,38 @@ def run_test(args, cmd: List[str]) -> int:
     if os.path.exists(serial_log):
         os.remove(serial_log)
 
-    process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
-                               stderr=subprocess.PIPE)
+    handle = open(serial_log, "w", encoding="utf-8", errors="replace")
+
+    process = subprocess.Popen(cmd, stdin=subprocess.DEVNULL,
+                               stdout=subprocess.PIPE,
+                               stderr=subprocess.STDOUT)
+
+    # Read the pipe on its own thread so it never fills and blocks the guest.
+    # A 64 KiB pipe buffer would stall QEMU mid-line if nobody drained it.
+    chunks: List[bytes] = []
+    reader_done = threading.Event()
+
+    def drain() -> None:
+        assert process.stdout is not None
+        try:
+            while True:
+                block = process.stdout.read(4096)
+                if not block:
+                    break
+                chunks.append(block)
+                try:
+                    handle.write(block.decode("utf-8", errors="replace"))
+                    handle.flush()
+                except (OSError, ValueError):
+                    pass
+        finally:
+            reader_done.set()
+
+    reader = threading.Thread(target=drain, daemon=True)
+    reader.start()
+
+    def collected() -> str:
+        return b"".join(chunks).decode("utf-8", errors="replace")
 
     deadline = time.time() + args.timeout
     output = ""
@@ -263,27 +311,15 @@ def run_test(args, cmd: List[str]) -> int:
                                   f"{process.returncode}")
                 break
 
-            if os.path.exists(serial_log):
-                # Reading a file that another process is still writing can fail
-                # transiently. On a 9p/drvfs mount (WSL reading a Windows drive)
-                # it raises ENODATA — "No data available" — for a log that simply
-                # has not been flushed yet. That is not an error worth aborting a
-                # boot test over, so transient failures are ignored and the next
-                # poll retries.
-                try:
-                    with open(serial_log, "r", errors="replace") as handle:
-                        output = handle.read()
-                except OSError:
-                    time.sleep(0.25)
-                    continue
+            output = collected()
 
-                if any(marker in output for marker in FATAL_MARKERS):
-                    failure_reason = "kernel reported a fatal marker"
-                    break
+            if any(marker in output for marker in FATAL_MARKERS):
+                failure_reason = "kernel reported a fatal marker"
+                break
 
-                if all(marker in output for marker in EXPECTED_MARKERS):
-                    success = True
-                    break
+            if all(marker in output for marker in EXPECTED_MARKERS):
+                success = True
+                break
 
             time.sleep(0.25)
         else:
@@ -295,6 +331,26 @@ def run_test(args, cmd: List[str]) -> int:
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait(timeout=5)
+
+        # Let the reader finish draining what the pipe still holds, so the
+        # verdict and the log below are both judged on the complete output.
+        reader_done.wait(timeout=5)
+        reader.join(timeout=5)
+
+        # Re-evaluate against everything that was captured. The timeout is still
+        # the timeout; only the evidence used to judge it is now complete.
+        output = collected()
+        if not success:
+            if any(marker in output for marker in FATAL_MARKERS):
+                failure_reason = "kernel reported a fatal marker"
+            elif all(marker in output for marker in EXPECTED_MARKERS):
+                success = True
+                failure_reason = ""
+
+        try:
+            handle.close()
+        except (OSError, ValueError):
+            pass
 
     print()
     print("=" * 68)

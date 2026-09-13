@@ -84,14 +84,29 @@ af_u64 usermode_syscall_count(void)
 //   * wrapping past the top of memory is rejected by testing the END, not the
 //     start — a length that overflows is the classic way past a bounds check
 //   * the null page is never mapped, so an address near zero is refused
+//   * and every page the range touches must actually BE MAPPED, and carry the
+//     USER bit, and be writable if the call is going to write to it
 //
-// What this does NOT yet do is confirm the range is actually MAPPED and carries
-// the right permissions. That needs the process's address-space record, which
-// arrives with processes proper. Until then, a user program can pass a pointer
-// into a hole and take a page fault — which is a kernel bug, but a contained one:
-// the fault handler sees a user-mode frame and can kill the process rather than
-// the machine.
+// The last of those is the one that matters most, and it was missing until now.
+// A range check answers "is this address in the user half?"; it does not answer
+// "does this address exist?". Without the second question, a program passing a
+// pointer into a hole between two of its own mappings reached the kernel's copy
+// and took a page fault in kernel mode. The fault handler reports it as a bug in
+// the kernel, which is exactly what it is — the kernel dereferenced a pointer it
+// had been told to trust.
+//
+// Walking the range costs a page-table lookup per page, and that is a cost a
+// program gets to choose. So the walk is bounded: see AF_MAX_VALIDATED_PAGES.
 // =============================================================================
+
+// The largest range a single call may have validated, in pages (16 MiB).
+//
+// A user-supplied length is attacker-controlled, and walking an arbitrarily long
+// range one page at a time is a denial-of-service vector against the kernel. A
+// call that genuinely needs to name more than this must move the data in
+// chunks, or describe the mapping rather than the buffer.
+#define AF_MAX_VALIDATED_PAGES 4096
+
 static bool user_range_ok(af_u64 addr, af_u64 length)
 {
     // A zero-length buffer is meaningless and almost certainly a caller bug.
@@ -119,22 +134,77 @@ static bool user_range_ok(af_u64 addr, af_u64 length)
     return true;
 }
 
+// True when every page the range touches is mapped, user-accessible, and
+// writable if the caller intends to write.
+//
+// The first and last addresses are rounded outwards, so a range that starts or
+// ends mid-page is validated over the whole of the pages it sits in rather than
+// only the bytes it names. A program that passes the last three bytes of a
+// mapped page and a length that spills into the next one must not be able to
+// reach a page it does not own by starting inside a page it does.
+static bool user_pages_ok(af_u64 addr, af_u64 length, bool needs_write)
+{
+    const af_u64 pages = ((addr & AF_PAGE_MASK) + length + AF_PAGE_MASK)
+                         / AF_PAGE_SIZE;
+    if (pages == 0 || pages > AF_MAX_VALIDATED_PAGES) {
+        return false;
+    }
+
+    hal_pt_root_t root = hal_get_page_table();
+    af_u64 page = addr & ~(af_u64)AF_PAGE_MASK;
+
+    for (af_u64 i = 0; i < pages; i++, page += AF_PAGE_SIZE) {
+        const af_u32 flags = hal_query_flags(root, (af_vaddr)page);
+
+        if ((flags & HAL_PRESENT) == 0) {
+            return false;
+        }
+
+        // Mapped but supervisor-only is not good enough. Ring 3 could not have
+        // read it either, and the only pages in that state belong to the kernel.
+        if ((flags & HAL_USER) == 0) {
+            return false;
+        }
+
+        if (needs_write && (flags & HAL_WRITABLE) == 0) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+// The check every system call that takes a buffer runs.
+static bool user_buffer_ok(af_u64 addr, af_u64 length, bool needs_write)
+{
+    return user_range_ok(addr, length) &&
+           user_pages_ok(addr, length, needs_write);
+}
+
+
 // -----------------------------------------------------------------------------
 // Calls
 // -----------------------------------------------------------------------------
 static af_i64 sys_debug_write(af_u64 buf, af_u64 len)
 {
-    if (!user_range_ok(buf, len)) {
-        af_warn("syscall", "sys_debug_write: rejected buffer 0x%lX length %llu "
-                           "(out of the user range, or wrapping)",
-                buf, (unsigned long long)len);
-        return AF_ERR_FAULT;
-    }
-
+    // The cap comes FIRST, so validation walks only the pages that will actually
+    // be read. A program that offers a 1 MiB buffer has it truncated to one line
+    // and only that line's pages are checked — which is both cheaper and more
+    // truthful: the kernel is not reading the rest, so it has no business
+    // requiring it to be valid.
+    //
     // A hard cap as well as the range check: a program may legitimately hold a
     // very large buffer, but a single log line never needs to be one.
     if (len > 4096) {
         len = 4096;
+    }
+
+    if (!user_buffer_ok(buf, len, false)) {
+        af_warn("syscall", "sys_debug_write: rejected buffer 0x%lX length %llu "
+                           "(out of the user range, wrapping, or not mapped "
+                           "user-readable)",
+                buf, (unsigned long long)len);
+        return AF_ERR_FAULT;
     }
 
     const char *text = (const char *)(af_uptr)buf;

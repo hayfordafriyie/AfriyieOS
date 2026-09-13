@@ -15,11 +15,14 @@ changes incompatibly without a version bump.
 >    changes when the instruction does. `syscall`/`sysretq` needs
 >    `IA32_STAR`/`LSTAR`/`FMASK` set up and a second entry path, which was not
 >    worth adding in the milestone that first crossed the privilege boundary.
-> 2. **Argument validation does not yet consult the page tables.** §3 describes
->    `user_ptr_ok` calling `vmm_range_has_access`. At v0.4 it checks range and
->    wraparound and stops there, so a pointer that is in range but *unmapped*
->    faults in kernel mode instead of returning `AF_ERR_FAULT`. This is a real
->    gap, not a simplification — it is the first thing to fix in v0.5.
+> 2. **The process's own mapping record does not exist yet.** §3's `user_ptr_ok`
+>    takes an `af_process_t *` and asks `vmm_range_has_access`. At v0.4 there is
+>    one address space and no process object, so the check asks the page tables
+>    directly through `hal_query_flags` instead. The property being enforced is
+>    the same one — every page in the range is mapped, user-accessible, and
+>    writable if the call writes — but it is enforced against the current page
+>    table rather than against a per-process record. When processes arrive at
+>    v0.5 the argument changes and the walk does not.
 
 ---
 
@@ -114,32 +117,69 @@ defensive programming; it is the difference between a buggy application and a
 kernel compromise.
 
 ```c
-/* kernel/core/syscall.c */
-static bool user_ptr_ok(af_process_t *proc, af_uptr addr, af_size len, bool writable)
+/* kernel/core/syscall.c — as built at v0.4 */
+static bool user_range_ok(af_u64 addr, af_u64 length)
 {
-    /* Reject anything that could wrap around the top of the address space. */
-    if (addr + len < addr) {
-        return false;
+    if (length == 0) return false;
+    if (addr < AF_USER_BASE) return false;          /* the null page */
+    af_u64 end = addr + length;
+    if (end < addr) return false;                   /* wrapped */
+    if (end > AF_USER_TOP) return false;            /* into the kernel half */
+    return true;
+}
+
+static bool user_pages_ok(af_u64 addr, af_u64 length, bool needs_write)
+{
+    /* Bounded: an attacker-chosen length must not become an unbounded walk. */
+    const af_u64 pages = ((addr & AF_PAGE_MASK) + length + AF_PAGE_MASK) / AF_PAGE_SIZE;
+    if (pages == 0 || pages > AF_MAX_VALIDATED_PAGES) return false;
+
+    hal_pt_root_t root = hal_get_page_table();
+    af_u64 page = addr & ~(af_u64)AF_PAGE_MASK;
+
+    for (af_u64 i = 0; i < pages; i++, page += AF_PAGE_SIZE) {
+        const af_u32 flags = hal_query_flags(root, (af_vaddr)page);
+        if ((flags & HAL_PRESENT) == 0) return false;
+        if ((flags & HAL_USER) == 0)    return false;   /* kernel page */
+        if (needs_write && (flags & HAL_WRITABLE) == 0) return false;
     }
-    /* Reject the never-mapped zero page and anything in the kernel half. */
-    if (addr < AF_USER_BASE || addr + len > AF_USER_TOP) {
-        return false;
-    }
-    /* Walk the process's own mappings; the range must be fully covered
-       and must carry the requested access right. */
-    return vmm_range_has_access(proc->space, addr, len, writable);
+    return true;
 }
 ```
 
+Three properties are load-bearing, and each was a bug at some point:
+
+* **The range check alone is not enough.** "Is this in the user half?" and "does
+  this exist?" are different questions. A pointer into a hole between two of the
+  program's own mappings passes the first and faults on the second — in *kernel*
+  mode, which makes it the kernel's bug.
+* **The check walks from the first page and rounds the end outwards.** Validating
+  only the bytes named lets a range that starts near the end of a mapped page
+  reach into the next page, which the program may not own.
+* **The walk is bounded** (`AF_MAX_VALIDATED_PAGES`, 16 MiB). The length is
+  attacker-controlled, and a page-table lookup per page on an arbitrary length is
+  a denial-of-service vector against the kernel. A call that needs more must move
+  the data in chunks.
+
 Rules, without exception:
 
-1. A user pointer is never dereferenced before `user_ptr_ok` passes.
+1. A user pointer is never dereferenced before `user_buffer_ok` passes.
 2. A length from user space is bounds-checked against its buffer before use —
    never trusted, never used to size an allocation without a cap.
 3. A capability argument is validated by `cap_lookup`, which checks the slot,
    the generation and the required right.
 4. A syscall that can block must have a wakeup condition that includes "the peer
    died" (see [ipc-protocol.md](../architecture/ipc-protocol.md) §8).
+
+**These rules are tested from the only side that can test them.** Validation that
+is written but never given a hostile input is validation nobody has evidence for,
+so `apps/init` passes six malformed buffers to `sys_debug_write` — the null page, an
+in-range unmapped address, a hole inside its own image, a length that wraps, a
+range past the user top, and a zero length — and requires a negative status from
+each. It then reads a buffer it legitimately owns through the same call, because a
+validator strict enough to reject everything would pass the first six checks and
+break every real program. See the `AF_EXEC_RAN` section of
+`docs/releases/evidence/v0.4.0-exec.log`.
 
 The syscall surface is fuzzed from v0.7 with random capability values, random
 pointers inside and outside the valid range, and random lengths including `0`,

@@ -803,12 +803,12 @@ numbering. It is deferred because the interrupt path was already written and
 tested at v0.4, and `SYSCALL` would have added MSR setup and a second entry path
 to debug in the same milestone that first crossed the privilege boundary.
 
-**Argument validation at v0.4 is incomplete, deliberately recorded.** Range and
-wraparound are checked, but not whether the range is *mapped*. A user pointer that
-is in range but unmapped reaches the copy and faults in kernel mode instead of
-returning an error. Fixing it means consulting the page tables, which is exactly
-what `vmm_range_has_access` in `docs/abi/syscalls.md` §3 describes and what v0.4
-does not yet have.
+**Argument validation at v0.4 is enforced against the live page tables, not a
+per-process record.** Range, wraparound, and whether every page in the range is
+mapped, user-accessible and (for writes) writable are all checked before any
+dereference. The only thing missing is the `af_process_t *` argument in the design
+below — the walk itself is the same one and will not change when processes arrive.
+The six malformed buffers `apps/init` passes are the evidence.
 
 ### 9.3 IPC message and protocol header
 
@@ -1202,10 +1202,12 @@ partially-converted kernel faults on its first instruction fetch.
 - [x] Number bound check (`AF_SYS_MAX`) — an out-of-range number returns
       `AF_ERR_NOTSUP` rather than indexing anything
 - [x] Arg validation: range and wraparound are checked before use
-- [ ] Arg validation: **is the range actually mapped?** — *open, and the one to fix
-      next. A user pointer that is in range but unmapped reaches the copy and takes
-      a `#PF` in kernel mode rather than returning an error. The page tables have
-      the information; the check just does not consult them yet.*
+- [x] Arg validation: **is the range actually mapped?** Every page the range
+      touches is looked up in the page tables and must be present, user-accessible,
+      and writable if the call writes. The walk is bounded (16 MiB) because the
+      length is attacker-controlled — a page-table lookup per page on an arbitrary
+      length is a denial-of-service vector. Verified from ring 3 by `apps/init`,
+      which passes six malformed buffers and requires an error from each.
 - [x] `sys_debug_write`, `sys_exit`, `sys_yield`, `sys_clock_get`
 - [x] Return-value convention: `>= 0` success, negative `af_status_t` error
 - [x] Numbering is append-only, with retired numbers reserved
@@ -1281,11 +1283,16 @@ partially-converted kernel faults on its first instruction fetch.
 - [x] Page-permission assertions from the kernel side: code is user+exec and NOT
       writable, stack is user+writable and NOT executable, and the kernel image at
       `0x100000` is NOT user-accessible
-- [ ] CPL assertion test: read `cs` inside the user program, assert the low 2 bits
-      are 3 — *the panic dump prints `cs=0x1b` and the whole boot fails if it is
-      not, which is weaker than an in-program assertion. Cheap to add.*
-- [ ] Pointer-validation test: pass `0xDEADBEEF` to `sys_debug_write`, assert a
-      clean error rather than a kernel fault — *fails today; see 0.4.2*
+- [x] CPL assertion test: the program reads `cs` and asserts the low 2 bits are 3,
+      before any other check — because if it is not at CPL 3, every other check
+      below it is worthless. (The panic dump also prints `cs`, but reading it in
+      the program is the assertion; reading it in the kernel is only a report.)
+- [x] Pointer-validation test: the program passes six malformed buffers — the null
+      page, an in-range unmapped address, a hole inside its own image, a length
+      that wraps, a range past the user top, and a zero length — and requires a
+      clean negative status from each rather than a kernel fault. It then reads a
+      buffer it legitimately owns, because a validator strict enough to reject
+      everything would pass the first six and break every real program.
 
 **✅ Acceptance criteria:** a user-mode ELF program is loaded off the file system,
 entered at CPL 3, runs its own checks, and exits with status 0; the kernel remains
