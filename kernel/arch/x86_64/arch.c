@@ -146,9 +146,14 @@ void af_arch_panic_dump(void)
         // Raw stack words around rsp. Without a symbol table this is the only
         // way to see a call chain, and it is usually enough.
         //
-        // v0.1 runs in the low half (identity-mapped at 1 MiB), so any readable
-        // address below the canonical user ceiling is worth printing.
-        if (f->rsp >= 0x1000 && f->rsp < 0x0000800000000000ULL) {
+        // ONLY IN THE KERNEL HALF. A fault taken in user mode has rsp pointing
+        // into the user's stack, and the panic dump runs in ring 0 with the
+        // user's pages still mapped — reading there is legal, but reading a
+        // stack pointer that sits exactly at the top of the mapped region is
+        // not: the bytes above it are unmapped, and the dump takes a second
+        // fault inside the panic handler. That produced "recursive panic" on the
+        // first ring-3 test, which buried the original fault under a cascade.
+        if (f->rsp >= AF_KERNEL_BASE) {
             const af_u64 *stack = (const af_u64 *)(af_uptr)f->rsp;
             af_log_raw("  stack:\n");
             for (af_u32 i = 0; i < 8; i++) {
@@ -164,6 +169,13 @@ void af_arch_panic_dump(void)
                 af_log_raw(b);
                 af_log_raw("\n");
             }
+        } else {
+            char line[128];
+            af_snprintf(line, sizeof(line),
+                        "  stack      : in the user half (0x%lX) — not dumped; "
+                        "the bytes above a user stack pointer may be unmapped\n",
+                        f->rsp);
+            af_log_raw(line);
         }
     } else {
         af_log_raw("  no interrupt frame: the panic happened outside a fault\n");
@@ -307,6 +319,11 @@ af_status_t hal_cpu_init(void)
         return rc;
     }
     af_marker("AF_IDT_READY");
+
+    // The TSS comes after the GDT (its descriptor lives there) and after the IDT
+    // (so a failure during the transition is reportable rather than a triple
+    // fault). Ring 3 cannot be entered without it.
+    af_x86_tss_init();
 
     return AF_OK;
 }

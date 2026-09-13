@@ -147,6 +147,31 @@ static af_u64 *walk_to_next_level(af_u64 *parent, af_u32 index, af_u32 flags)
             af_error("vmm", "cannot descend into a huge page at table index %u", index);
             return NULL;
         }
+
+        // =====================================================================
+        // AN EXISTING TABLE MAY NEED THE USER BIT ADDED TO IT
+        // =====================================================================
+        // On x86, a page is accessible from ring 3 only if the USER bit is set in
+        // EVERY paging-structure entry used to translate it — the PML4 entry
+        // included. A missing bit anywhere in the chain denies access to
+        // everything below it, and the fault describes a protection violation on
+        // a page whose own entry looks perfectly correct.
+        //
+        // This is what broke the first ring-3 transition. The identity-map
+        // bootstrap created PML4[0] for the kernel, without USER. Mapping a user
+        // page at 4 GiB walks through that same PML4 entry, created the tables
+        // below it correctly with USER set, and then faulted on the first
+        // instruction fetch because the top of the chain still said kernel-only.
+        //
+        // The leaf entries of the identity map do NOT have USER and are not
+        // reachable from ring 3 — which is the property that makes this fix safe
+        // rather than a hole: granting USER on an intermediate table permits
+        // nothing on its own.
+        // =====================================================================
+        if ((flags & HAL_USER) != 0 && (entry & PTE_USER) == 0) {
+            parent[index] = entry | PTE_USER;
+        }
+
         return phys_to_ptr(entry & PTE_ADDR_MASK);
     }
 

@@ -1,0 +1,12 @@
+AfriyieOS v0.4 user mode — captured from a real boot
+===============================================================
+
+[    0.260000] INFO  test  : user mode test: building a ring-3 program at 0x100000000
+[    0.260000] INFO  test  :   crossing into ring 3 at 0x100000000 with stack 0x100011000
+Hello from ring 3!
+Hello from ring 3!
+[    0.310000] INFO  syscall: 3 system calls handled from ring 3
+[    0.310000] INFO  syscall: user thread exiting with code 0
+[    0.310000] INFO  syscall: 3 system calls handled from ring 3
+[    0.260000] INFO  boot  : AF_USER_PREPARED
+[    0.310000] INFO  boot  : AF_USER_OK

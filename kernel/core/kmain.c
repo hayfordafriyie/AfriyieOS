@@ -39,6 +39,7 @@
 #include "afriyie/block.h"
 #include "afriyie/virtio_blk.h"
 #include "afriyie/fs.h"
+#include "afriyie/syscall.h"
 
 // Defined at the bottom of this file. Declared here because kmain creates the
 // idle thread before the definition appears.
@@ -333,6 +334,17 @@ void kmain(af_boot_info_t *boot_info)
     // ...then read a FILE from it: GPT -> FAT32 -> directory walk -> cluster
     // chain -> contents, checked against the exact expected string.
     fat32_selftest();
+
+    // -------------------------------------------------------------------------
+    // 12. User mode
+    //
+    // The last thing the boot thread does. af_x86_enter_user_mode never returns
+    // to this point: the ring-3 program's final system call terminates the
+    // thread, so the idle thread takes over and the system goes quiet.
+    // -------------------------------------------------------------------------
+    if (block_boot_device() != NULL) {
+        usermode_selftest();
+    }
 
     // -------------------------------------------------------------------------
     // Idle

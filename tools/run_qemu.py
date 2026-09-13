@@ -64,6 +64,8 @@ EXPECTED_MARKERS = [
     "AF_PCI_READY",
     "AF_BLOCK_OK",
     "AF_FS_OK",
+    "AF_USER_PREPARED",
+    "AF_USER_OK",
 ]
 
 FATAL_MARKERS = [

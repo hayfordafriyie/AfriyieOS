@@ -33,6 +33,8 @@ set(AF_KERNEL_SOURCES
     # --- v0.3: file systems ---
     fs/gpt.c
     fs/fat32.c
+    # --- v0.4: user mode and system calls ---
+    core/syscall.c
 )
 
 # -----------------------------------------------------------------------------
@@ -45,6 +47,7 @@ if(AF_TARGET STREQUAL "x86_64")
     set(AF_ARCH_C_SOURCES
         arch/x86_64/serial.c
         arch/x86_64/gdt.c
+        arch/x86_64/tss.c
         arch/x86_64/idt.c
         arch/x86_64/timer.c
         arch/x86_64/paging.c
@@ -56,6 +59,7 @@ if(AF_TARGET STREQUAL "x86_64")
         arch/x86_64/isr.asm
         arch/x86_64/cpu.asm
         arch/x86_64/context.asm
+        arch/x86_64/usermode.asm
     )
 elseif(AF_TARGET STREQUAL "aarch64")
     message(FATAL_ERROR

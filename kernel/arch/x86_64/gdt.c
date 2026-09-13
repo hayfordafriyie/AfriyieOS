@@ -24,7 +24,11 @@
 #define GDT_GRAN_LIMIT_HIGH(l) (((l) >> 16) & 0x0Fu)
 
 typedef struct AF_PACKED {
-    af_gdt_entry_t entries[6];
+    // Seven slots, not six: the 64-bit TSS descriptor is SIXTEEN bytes and
+    // occupies slots 5 and 6. A six-slot table leaves the upper half of the TSS
+    // descriptor outside the limit, and `ltr` then faults with a #GP whose error
+    // code names the selector rather than the descriptor that was too short.
+    af_gdt_entry_t entries[7];
     af_gdt_pointer_t pointer;
 } af_gdt_table_t;
 
@@ -78,12 +82,14 @@ af_status_t af_x86_gdt_init(void)
               GDT_ACCESS_RW,
               GDT_GRAN_4K | GDT_GRAN_LONG_MODE);
 
-    // 5: 0x28 TSS. Written by v0.4 (it carries RSP0, the stack the CPU loads
-    //    when an interrupt arrives from user mode). Left as a present 64-bit
-    //    system descriptor with a zero base so the selector is at least valid.
+    // 5: 0x28 TSS. The descriptor is written by af_x86_tss_init() in tss.c,
+    //    which needs sixteen bytes and therefore slots 5 AND 6. Left as a
+    //    present 64-bit system descriptor with a zero base here so the selector
+    //    is at least valid before the TSS exists.
     set_entry(5, 0, 0,
               GDT_ACCESS_PRESENT | GDT_ACCESS_RING(0),
               0);
+    set_entry(6, 0, 0, 0, 0);
 
     s_gdt.pointer.limit = (af_u16)(sizeof(s_gdt.entries) - 1);
     s_gdt.pointer.base  = (af_u64)(af_uptr)&s_gdt.entries[0];
@@ -91,4 +97,28 @@ af_status_t af_x86_gdt_init(void)
     gdt_load(&s_gdt.pointer);
 
     return AF_OK;
+}
+
+// Writes a raw 16-byte system descriptor, used by the TSS layer.
+//
+// The TSS descriptor cannot go through set_entry(): that helper writes an
+// ordinary 8-byte descriptor, and the 64-bit TSS one needs two slots with its
+// base split across three fields and its upper 32 bits in a second slot. Passing
+// it through the ordinary path produces a descriptor the CPU loads incorrectly.
+void af_x86_gdt_write_raw(af_u32 index, af_u64 low, af_u64 high)
+{
+    af_u64 *table = (af_u64 *)&s_gdt.entries[0];
+
+    if (index + 1 >= AF_ARRAY_LEN(s_gdt.entries)) {
+        af_error("gdt", "raw descriptor at index %u does not fit the table",
+                 index);
+        return;
+    }
+
+    table[index]     = low;
+    table[index + 1] = high;
+
+    // The descriptor is in the live GDT already, so no reload is needed for the
+    // CPU to see it — only the task register needs loading, which the TSS layer
+    // does with `ltr`.
 }

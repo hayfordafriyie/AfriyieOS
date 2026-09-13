@@ -69,6 +69,28 @@ echo "  AfriyieOS full verification — target $ARCH"
 echo "  toolchain: $AF_CROSS_PREFIX"
 echo "==============================================================="
 
+# -----------------------------------------------------------------------------
+# Clean the environment first
+#
+# A stray QEMU from an interrupted run or a debugging session keeps the disk
+# image and the shared OVMF variables file open, and the next boot test then
+# fails in a way that looks like a kernel bug. That is not hypothetical: it is
+# exactly what produced a "6 of 7 passed" result from a green tree, and a flaky
+# gate is worse than a failing one because it teaches you to re-run instead of
+# to look.
+#
+# The failure is not retried. Retrying would hide a real regression behind the
+# same mechanism that hides a stray process, and the two are indistinguishable
+# from the outside. Removing the hazard is the fix; the gate stays hard.
+# -----------------------------------------------------------------------------
+if pgrep -x qemu-system-x86_64 >/dev/null 2>&1; then
+    printf '\033[1;33m==>\033[0m killing stray QEMU processes before starting\n'
+    pkill -9 -x qemu-system-x86_64 2>/dev/null || true
+    sleep 1
+fi
+
+rm -f /usr/share/afriyieos-OVMF_VARS.fd 2>/dev/null || true
+
 # --- Tier 1: host only, no cross-compiler --------------------------------
 step "Host tests (image toolchain)"       s_host_tests
 step "Compile check (all C + assembly)"   s_compile

@@ -82,6 +82,31 @@ void gdt_load(const af_gdt_pointer_t *gdtr);
 // Builds and installs the GDT. Called from hal_cpu_init().
 af_status_t af_x86_gdt_init(void);
 
+// Writes a raw 16-byte system descriptor into the live GDT. Used by the TSS
+// layer, whose descriptor does not fit the ordinary 8-byte helper.
+void af_x86_gdt_write_raw(af_u32 index, af_u64 low, af_u64 high);
+
+// =============================================================================
+// Task State Segment
+// =============================================================================
+// 64-bit mode does not use hardware task switching, but RSP0 is not optional:
+// it is the stack the CPU loads when an interrupt arrives from ring 3. Without
+// it a user process can choose what the kernel's exception handler returns to.
+void af_x86_tss_init(void);
+void af_x86_tss_set_rsp0(af_u64 rsp0);
+af_u64 af_x86_tss_get_rsp0(void);
+
+// =============================================================================
+// User mode
+// =============================================================================
+
+// Drops to ring 3 at `entry` with `user_stack_top` as its stack. Never returns
+// to the caller: the only way back is a system call.
+AF_NORETURN void af_x86_enter_user_mode(af_u64 entry, af_u64 user_stack_top);
+
+// The system call vector. 0x80 with DPL 3 so ring-3 code may invoke it.
+#define AF_X86_SYSCALL_VECTOR 0x80
+
 // =============================================================================
 // IDT
 // =============================================================================
